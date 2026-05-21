@@ -1,0 +1,9 @@
+name: hand_eye
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pip:
+      - opencv-contrib-python

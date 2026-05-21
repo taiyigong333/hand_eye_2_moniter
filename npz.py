@@ -19,7 +19,7 @@ def ensure_uint8_bgr(img):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("npz_path", type=str)
-    parser.add_argument("--out_dir", type=str, default="./dataset_from_npz")
+    parser.add_argument("--out_dir", type=str, default="data/dataset_from_npz")
     args = parser.parse_args()
 
     data = np.load(args.npz_path)

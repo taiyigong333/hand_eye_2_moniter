@@ -61,7 +61,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('npz_path')
     ap.add_argument('--index', type=int, default=0)
-    ap.add_argument('--out_dir', default='./npz_inspect')
+    ap.add_argument('--out_dir', default='data/npz_inspect')
     args = ap.parse_args()
 
     npz = np.load(args.npz_path, allow_pickle=True)

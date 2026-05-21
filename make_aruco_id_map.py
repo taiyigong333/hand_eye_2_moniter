@@ -5,6 +5,7 @@ import argparse
 import json
 import cv2
 import numpy as np
+from pathlib import Path
 
 
 def str2bool(v):
@@ -130,8 +131,8 @@ def transform_points(H, pts):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="一张能看清整块或大部分标定板的图片")
-    parser.add_argument("--out", default="aruco_id_map.json")
-    parser.add_argument("--vis", default="aruco_id_map_vis.jpg")
+    parser.add_argument("--out", default="assets/boards/aruco_id_map.json")
+    parser.add_argument("--vis", default="assets/boards/aruco_id_map_vis.jpg")
     parser.add_argument("--aruco_dict", default="DICT_6X6_250")
     parser.add_argument("--grid_cols", type=int, default=20)
     parser.add_argument("--grid_rows", type=int, default=15)
@@ -307,13 +308,18 @@ def main():
         for k in sorted(id_map.keys())
     }
 
-    with open(args.out, "w", encoding="utf-8") as f:
+    out_path = Path(args.out)
+    vis_path = Path(args.vis)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    vis_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out_map, f, indent=2, ensure_ascii=False)
 
-    cv2.imwrite(args.vis, vis)
+    cv2.imwrite(str(vis_path), vis)
 
-    print(f"[OK] saved id map: {args.out}")
-    print(f"[OK] saved visualization: {args.vis}")
+    print(f"[OK] saved id map: {out_path}")
+    print(f"[OK] saved visualization: {vis_path}")
     print(f"[INFO] mapped ids: {len(out_map)}")
     print(f"[INFO] skipped ids: {len(skipped)}")
 

@@ -773,7 +773,7 @@ def main():
                     help="Skip sample if end/fixed reprojection RMSE is larger than this value.")
     parser.add_argument("--translation_scale", type=float, default=1.0)
     parser.add_argument("--min_tags", type=int, default=4)
-    parser.add_argument("--output_dir", type=str, default="calib_output")
+    parser.add_argument("--output_dir", type=str, default="outputs/calib_output")
     parser.add_argument("--handeye_method", type=str, default="tsai",
                         choices=["tsai", "park", "horaud", "andreff", "daniilidis"])
     args = parser.parse_args()

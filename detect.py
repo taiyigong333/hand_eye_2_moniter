@@ -1,6 +1,7 @@
 import cv2
 import argparse
 import numpy as np
+from pathlib import Path
 
 
 DICT_CANDIDATES = {
@@ -53,7 +54,7 @@ def detect_with_dict(gray, dict_id):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="输入图片路径")
-    parser.add_argument("--out", default="detected_markers.jpg", help="输出标注图路径")
+    parser.add_argument("--out", default="outputs/detected_markers.jpg", help="输出标注图路径")
     args = parser.parse_args()
 
     img = cv2.imread(args.image)
@@ -120,8 +121,10 @@ def main():
     else:
         print("没有检测到 marker。可以尝试拍正一点、减少反光、提高对比度。")
 
-    cv2.imwrite(args.out, output)
-    print(f"\n标注结果已保存到: {args.out}")
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_path), output)
+    print(f"\n标注结果已保存到: {out_path}")
 
 
 if __name__ == "__main__":
