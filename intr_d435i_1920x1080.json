@@ -1,0 +1,22 @@
+{
+  "camera_name": "Intel RealSense D435I",
+  "serial": "254522072098",
+  "width": 1920,
+  "height": 1080,
+  "stream": "color",
+  "format": "bgr8",
+  "fps": 30,
+  "K": [
+    [1365.7696533203125, 0.0, 966.8340454101562],
+    [0.0, 1365.2962646484375, 554.5787353515625],
+    [0.0, 0.0, 1.0]
+  ],
+  "dist": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "distortion_model": "inverse_brown_conrady"
+}
