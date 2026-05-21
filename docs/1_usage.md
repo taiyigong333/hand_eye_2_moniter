@@ -17,14 +17,14 @@
 - `tools/inspect_npz_layout.py`：检查 `.npz` 内部 key、shape 和图像样例，用于确认数据布局。
 - `tools/detect.py`：对单张图片尝试多个 ArUco / AprilTag 字典，辅助确认标定板字典类型。
 - `tools/make_aruco_id_map.py`：根据一张清晰标定板图片生成 marker ID 到棋盘格行列的映射。
-- `scripts/run_current_calibration.ps1`：使用当前样例数据运行完整标定。
+- `scripts/run_current_calibration.ps1`：使用本地样例数据运行完整标定。
 - `scripts/collect_and_calibrate.py`：通过 UR RTDE 和双 RealSense 实时采集样本，并在结束后自动调用标定。
 - `configs/live_collection.example.json`：实时采集配置示例。
 - `configs/intr_d405_1280x720.json`：末端 D405 相机内参示例。
 - `configs/intr_d435i_1920x1080.json`：固定 D435i 相机内参示例。
 - `assets/boards/aruco_id_map_new.json`：当前标定板的 ID 映射。
-- `data/dataset_from_npz/`：当前已导出的标定样本。
-- `outputs/calib_output_correct_intr/`：当前已生成的一份标定结果和调试可视化。
+- `data/dataset_from_npz/`：本地已导出的标定样本，已加入 `.gitignore`，不随 Git 保存。
+- `outputs/calib_output_correct_intr/`：本地已生成的一份标定结果和调试可视化，`outputs/` 默认不随 Git 保存。
 
 ## 3. 环境依赖
 
@@ -127,7 +127,7 @@ python tools/make_aruco_id_map.py assets/boards/board.jpg `
 
 ## 6. 运行主标定
 
-当前数据对应的完整命令：
+本地 `data/dataset_from_npz/` 数据对应的完整命令：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1

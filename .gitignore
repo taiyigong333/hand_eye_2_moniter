@@ -9,6 +9,7 @@ _verify*/
 verification_output/
 temp/
 data/live_capture*/
+data/dataset_from_npz/
 outputs/live_calibration*/
 
 outputs/

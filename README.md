@@ -36,7 +36,7 @@
 
 本项目有两种常用运行方式：
 
-- 使用仓库内已有样本直接跑标定：适合验证环境、复现当前结果。
+- 使用本地已有样本直接跑标定：适合验证环境、复现当前结果；`data/dataset_from_npz/` 不随 Git 保存。
 - 连接 UR7e 和两台 RealSense 实时采集：适合重新采集数据并自动标定。
 
 ## 1. 环境准备
@@ -55,6 +55,8 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help
 ```
 
 ## 2. 使用已有样本运行标定
+
+`data/dataset_from_npz/` 是本地样本目录，已加入 `.gitignore`。若目录不存在，需要先由原始 `.npz` 导出，或从本机备份恢复。
 
 在仓库根目录运行：
 
@@ -83,7 +85,7 @@ python calib.py `
   --output_dir outputs/calib_output_correct_intr
 ```
 
-当前仓库已经包含一份示例输出：`outputs/calib_output_correct_intr/calibration_result.json`。
+如果本地保留已有输出，可查看 `outputs/calib_output_correct_intr/calibration_result.json`；`outputs/` 默认也不随 Git 保存。
 
 ### 输出位置
 

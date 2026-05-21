@@ -19,6 +19,8 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe
 
 ## 2. 先用已有数据验证标定
 
+需要本地存在 `data/dataset_from_npz/`；该目录已被忽略，不随 Git 保存。
+
 运行：
 
 ```powershell
