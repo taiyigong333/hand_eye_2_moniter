@@ -1,0 +1,184 @@
+# 快速上手 quick_use
+
+这份文档只保留最短可执行路径。详细说明见 `README.md` 和 `docs/1_usage.md`。
+
+## 1. 准备环境
+
+在项目根目录执行：
+
+```powershell
+conda env update -n hand_eye -f environment.yml
+conda activate hand_eye
+```
+
+当前机器也可以直接使用：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe
+```
+
+## 2. 先用已有数据验证标定
+
+运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1
+```
+
+默认输出到：
+
+```text
+outputs/calib_output_correct_intr/
+```
+
+会生成：
+
+```text
+outputs/calib_output_correct_intr/
+├── calibration_result.json          # 最终标定结果
+├── dynamic_end_camera_poses.json    # 每个有效样本的末端相机动态位姿
+└── debug_vis/                       # ArUco 检测点和重投影调试图
+```
+
+最重要的结果在 `calibration_result.json`：
+
+- `T_ee_cam_end`：末端相机到机械臂末端坐标系的外参。
+- `T_base_cam_fixed`：固定相机到机器人基座坐标系的外参。
+- `T_base_board`：标定板到机器人基座坐标系的外参。
+
+## 3. 实时采集前检查配置
+
+先打开并确认：
+
+```text
+configs/live_collection.example.json
+```
+
+重点检查：
+
+- `robot.host`：UR7e IP。
+- `robot.program`：示教器中的 `autoHandEye.urp`。
+- `cameras[].serial`：两台 RealSense 序列号。
+- `sampling.mode`：`timed` 定时采集，或 `manual` 手动采集。
+- `sampling.interval_s` / `sampling.max_samples`：定时采样间隔和数量。
+- `calibration.output_dir`：自动标定结果输出目录。
+
+先 dry-run，不连接机器人和相机：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run
+```
+
+## 4. 实时定时采集并自动标定
+
+确认 UR7e、RTDE、Dashboard 和 RealSense 都可用后运行：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json
+```
+
+默认流程：
+
+1. PC 通过 Dashboard 加载并启动 `autoHandEye.urp`。
+2. UR7e 围绕标定板运动。
+3. PC 通过 RTDE 读取 TCP。
+4. PC 读取两台 RealSense RGB 图像。
+5. 按 `sampling.interval_s` 定时保存样本。
+6. 样本数达到 `sampling.max_samples` 后自动调用 `calib.py`。
+
+## 5. 手动采集
+
+如果要人工控制采样时机：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --mode manual
+```
+
+默认按键：
+
+- `c`：保存一次样本。
+- `q`：结束采集并进入自动标定。
+
+Windows 下是单键读取，不需要回车。
+
+## 6. 实时采集输出
+
+样本默认输出到：
+
+```text
+data/live_capture/
+```
+
+结构：
+
+```text
+data/live_capture/
+├── capture_session_config.json      # 本次采集配置快照
+├── sample_000/
+│   ├── cam0_wrist.png               # 末端相机 RGB 图像
+│   ├── cam1_main.png                # 固定相机 RGB 图像
+│   └── pose.json                    # TCP、关节角、图像元数据
+├── sample_001/
+│   └── ...
+└── ...
+```
+
+若 `enable_depth=true`，样本目录还会包含深度图：
+
+```text
+depth0_wrist.png
+depth1_main.png
+```
+
+深度图按 RealSense 原始 `z16` 保存，真实深度为：
+
+```text
+depth_m = raw_value * depth_scale_m
+```
+
+自动标定结果默认输出到：
+
+```text
+outputs/live_calibration/
+├── calibration_result.json
+├── dynamic_end_camera_poses.json
+└── debug_vis/
+```
+
+## 7. 常用变体
+
+只采集，不自动标定：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --skip_calibration
+```
+
+如果已经在示教器上手动启动 `autoHandEye.urp`，跳过 Dashboard 控制：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --skip_robot_program
+```
+
+指定实时标定输出目录：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --output_dir outputs\my_live_calibration
+```
+
+## 8. 实机最小检查
+
+- PC 能 ping 通 `robot.host`。
+- UR 控制柜已启用 Dashboard server 和 RTDE。
+- `autoHandEye.urp` 已在示教器中。
+- 两台 RealSense 没有被 RealSense Viewer 占用。
+- 两台相机都能看到标定板。
+- `--dry_run` 打印出的 `calib.py` 参数符合预期。

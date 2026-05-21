@@ -25,6 +25,7 @@
 
 ## 文档
 
+- [docs/quick_use.md](docs/quick_use.md)：精简快速上手流程，包含最常用命令和默认输出位置。
 - [docs/1_usage.md](docs/1_usage.md)：项目使用方式、数据格式、常用命令和输出解释。
 - [docs/2_hand_eye_calibration_process.md](docs/2_hand_eye_calibration_process.md)：眼在手上与眼在手外的标定流程，以及当前项目支持状态。
 - [docs/3_project_handoff.md](docs/3_project_handoff.md)：当前仓库状态、验证记录和后续维护注意事项。
