@@ -7,8 +7,9 @@
 1. PC 通过 UR Dashboard 加载并启动示教器中的 `autoHandEye.urp`。
 2. PC 通过 RTDE 读取 UR7e 当前 TCP 位姿。
 3. PC 同时读取两台 RealSense 的 RGB 图像，并可按配置预留深度图。
-4. 按固定时间间隔或手动按键保存一组 `TCP + 双相机图像`。
-5. 采集结束后自动调用现有 `calib.py` 完成标定。
+4. 采集期间打开两路 OpenCV 预览窗口，便于观察标定板是否同时在视野内。
+5. 按固定时间间隔或手动按键保存一组 `TCP + 双相机图像`。
+6. 采集结束后自动调用现有 `calib.py` 完成标定。
 
 `temp/` 下的脚本只作为参考材料，本项目主流程不会导入或调用其中代码。
 
@@ -18,6 +19,7 @@
 - `configs/live_collection.example.json`：示例配置，包含机器人 IP、相机序列号、采样方式、内参输出和 `calib.py` 参数。
 - `handeye/robot.py`：RTDE 只读 TCP、Dashboard 加载/启动 URP。
 - `handeye/realsense.py`：双 RealSense color/depth 流启动、RGB 采集、active profile 内参读取。
+- `handeye/preview.py`：采集期间刷新双相机 OpenCV 预览窗口。
 - `handeye/dataset.py`：保存为 `calib.py` 已支持的 `sample_xxx/pose.json` 数据格式。
 - `handeye/workflow.py`：串联加载 URP、采样、写内参和自动标定。
 
@@ -50,6 +52,8 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 - `cameras[].serial`：两台 RealSense 序列号。建议实机前确认，不建议长期依赖自动枚举。
 - `cameras[].intrinsics_path`：启动相机后会把 active color profile 的内参写成 `calib.py` 可读格式。
 - `cameras[].enable_depth`：设为 `true` 时同时保存深度图；当前标定仍只使用 RGB。
+- `preview.enabled`：默认 `true`，采集时打开两路 RGB 预览窗口；命令行可用 `--no_preview` 关闭。
+- `preview.scale`：预览缩放比例，默认 `0.5`，只影响显示尺寸，不影响保存图像。
 - `sampling.mode`：`timed` 或 `manual`。
 - `calibration`：采集结束后传给 `calib.py` 的参数。
 
@@ -81,7 +85,15 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --mode manual
 ```
 
-手动模式默认按 `c` 保存一次，按 `q` 结束采集。Windows 下使用单键读取，不需要回车；其他平台会回退到命令行输入。
+手动模式默认按 `c` 保存一次，按 `q` 结束采集。预览开启时可在窗口中按键；Windows 终端也支持单键读取，不需要回车；关闭预览且非 Windows 时会回退到命令行输入。
+
+默认会打开两个 OpenCV 预览窗口。手动模式下，预览窗口或终端聚焦时按 `c` 保存、按 `q` 结束；定时模式下也可以按 `q` 提前结束采集。若当前环境没有桌面显示，使用：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --no_preview
+```
 
 只采集不自动标定：
 

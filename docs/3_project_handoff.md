@@ -16,7 +16,7 @@
 - 当前代码会先求腕部相机的 `T_ee_cam_end`，再基于标定板公共坐标系估计固定相机的 `T_base_cam_fixed`。
 - 当前项目支持双相机联合流程下的眼在手上和眼在手外结果输出。
 - 当前项目暂不支持只用固定相机独立求解眼在手外标定。
-- 新增实时采集入口 `scripts/collect_and_calibrate.py`，可加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、采集双 RealSense RGB 图像，并在采集结束后自动调用 `calib.py`。
+- 新增实时采集入口 `scripts/collect_and_calibrate.py`，可加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、打开双 RealSense RGB 预览窗口、采集图像，并在采集结束后自动调用 `calib.py`。
 - `temp/` 目录只作为本地参考材料，已加入 `.gitignore`，主流程不会导入或调用其中脚本。
 
 ## 常用命令
@@ -44,6 +44,14 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
   --config configs\live_collection.example.json
+```
+
+无桌面显示或不需要预览时关闭窗口：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --no_preview
 ```
 
 等价的完整命令：
@@ -96,9 +104,11 @@ conda activate hand_eye
 
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m compileall calib.py handeye scripts\collect_and_calibrate.py tools`
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run`
+- `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run --no_preview`
+- `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run --mode manual --preview_scale 0.25`
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m pip install pyrealsense2 ur-rtde`
 
-尚未做实机验证：当前会话没有连接 UR7e 和 RealSense，所以未实际执行 Dashboard 加载 `autoHandEye.urp`、RTDE TCP 读取和双相机采图。实机前先确认 `configs/live_collection.example.json` 中的机器人 IP 和两台相机序列号。
+尚未做实机验证：当前会话没有连接 UR7e 和 RealSense，所以未实际执行 Dashboard 加载 `autoHandEye.urp`、RTDE TCP 读取、双相机采图和预览窗口显示。实机前先确认 `configs/live_collection.example.json` 中的机器人 IP 和两台相机序列号。
 
 这个目录在当前 Windows 环境下可能触发 Git 的 `dubious ownership` 检查。可以对本仓库使用 per-command 方式运行 Git：
 
@@ -114,4 +124,4 @@ git -c safe.directory=F:/research/guo/hand-eye/calibration status --short --bran
 - 如果要复现实验结果，先固定 OpenCV 版本，因为 `cv2.aruco` 新旧 API 兼容分支可能影响检测细节。
 - 如果替换标定板或重拍板图，先重新运行 `tools/make_aruco_id_map.py`，不要沿用旧的 `assets/boards/aruco_id_map_new.json`。
 - 如果采集新的 `.npz`，先用 `tools/inspect_npz_layout.py` 确认 key 和 shape，再决定是否可以直接使用 `tools/npz.py`。
-- 如果使用实时采集，优先先跑 `--dry_run`，再确认 UR Dashboard、RTDE、RealSense Viewer 占用状态和相机序列号。
+- 如果使用实时采集，优先先跑 `--dry_run`，再确认 UR Dashboard、RTDE、RealSense Viewer 占用状态、相机序列号和预览窗口是否能显示两路画面。

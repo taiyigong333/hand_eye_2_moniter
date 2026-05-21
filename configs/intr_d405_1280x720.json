@@ -1,15 +1,20 @@
 {
-  "camera_name": "Intel RealSense D405",
-  "serial": "419122270341",
-  "width": 1280,
-  "height": 720,
-  "stream": "color",
-  "format": "bgr8",
-  "fps": 30,
   "K": [
-    [653.6248168945312, 0.0, 634.1995239257812],
-    [0.0, 652.6610717773438, 343.3070983886719],
-    [0.0, 0.0, 1.0]
+    [
+      653.6248168945312,
+      0.0,
+      634.1995239257812
+    ],
+    [
+      0.0,
+      652.6610717773438,
+      343.3070983886719
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
   ],
   "dist": [
     -0.05470449477434158,
@@ -18,5 +23,14 @@
     0.0006199476192705333,
     -0.017803439870476723
   ],
-  "distortion_model": "inverse_brown_conrady"
+  "width": 1280,
+  "height": 720,
+  "distortion_model": "inverse_brown_conrady",
+  "source": {
+    "type": "realsense_active_profile",
+    "role": "end",
+    "camera_index": 0,
+    "camera_name": "wrist_camera",
+    "serial": "419122270341"
+  }
 }

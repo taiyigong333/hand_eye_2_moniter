@@ -10,3 +10,5 @@ verification_output/
 temp/
 data/live_capture*/
 outputs/live_calibration*/
+
+outputs/

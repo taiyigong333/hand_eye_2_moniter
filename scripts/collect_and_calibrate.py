@@ -54,6 +54,17 @@ def parse_args() -> argparse.Namespace:
         help="只采集样本，不在结束后自动运行 calib.py。",
     )
     parser.add_argument(
+        "--no_preview",
+        action="store_true",
+        help="采集时不打开双相机实时预览窗口。",
+    )
+    parser.add_argument(
+        "--preview_scale",
+        type=float,
+        default=None,
+        help="覆盖预览窗口缩放比例，例如 0.5 表示按半尺寸显示。",
+    )
+    parser.add_argument(
         "--dry_run",
         action="store_true",
         help="只检查配置并打印将要执行的标定命令，不连接机器人或相机。",

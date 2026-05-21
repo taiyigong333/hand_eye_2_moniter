@@ -9,6 +9,12 @@
   },
   "refresh_intrinsics_from_device": true,
   "dataset_dir": "data/live_capture",
+  "preview": {
+    "enabled": true,
+    "scale": 0.5,
+    "wait_ms": 1,
+    "window_prefix": "hand-eye calibration"
+  },
   "cameras": [
     {
       "role": "end",

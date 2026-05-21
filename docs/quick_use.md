@@ -59,6 +59,7 @@ configs/live_collection.example.json
 - `robot.host`：UR7e IP。
 - `robot.program`：示教器中的 `autoHandEye.urp`。
 - `cameras[].serial`：两台 RealSense 序列号。
+- `preview.enabled`：默认打开两路 RGB 预览窗口。
 - `sampling.mode`：`timed` 定时采集，或 `manual` 手动采集。
 - `sampling.interval_s` / `sampling.max_samples`：定时采样间隔和数量。
 - `calibration.output_dir`：自动标定结果输出目录。
@@ -83,7 +84,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 1. PC 通过 Dashboard 加载并启动 `autoHandEye.urp`。
 2. UR7e 围绕标定板运动。
 3. PC 通过 RTDE 读取 TCP。
-4. PC 读取两台 RealSense RGB 图像。
+4. PC 读取两台 RealSense RGB 图像，并打开两个预览窗口。
 5. 按 `sampling.interval_s` 定时保存样本。
 6. 样本数达到 `sampling.max_samples` 后自动调用 `calib.py`。
 
@@ -102,7 +103,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 - `c`：保存一次样本。
 - `q`：结束采集并进入自动标定。
 
-Windows 下是单键读取，不需要回车。
+Windows 下是单键读取，不需要回车。默认也可以在预览窗口聚焦时按 `c` / `q`；定时模式下按 `q` 可提前结束采集。
 
 ## 6. 实时采集输出
 
@@ -172,6 +173,14 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
   --config configs\live_collection.example.json `
   --output_dir outputs\my_live_calibration
+```
+
+无桌面显示或不需要预览时关闭窗口：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --no_preview
 ```
 
 ## 8. 实机最小检查

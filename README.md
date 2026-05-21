@@ -145,7 +145,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --config configs\live_collection.example.json
 ```
 
-该流程会加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。
+该流程会加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。
 
 ### 常用命令
 
@@ -170,7 +170,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --mode manual
 ```
 
-手动模式默认按 `c` 保存一次样本，按 `q` 结束采集。Windows 下是单键读取，不需要回车。
+手动模式默认按 `c` 保存一次样本，按 `q` 结束采集。Windows 下是单键读取，不需要回车；预览窗口聚焦时也可以直接按 `c` / `q`。
 
 只采集样本，不自动运行标定：
 
@@ -186,6 +186,14 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
   --config configs\live_collection.example.json `
   --skip_robot_program
+```
+
+采集默认打开双相机预览窗口。无桌面显示或不需要观察画面时可关闭：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --no_preview
 ```
 
 ### 实时采集输出位置
@@ -284,6 +292,7 @@ outputs/live_calibration/
 - `cameras[].color_width` / `color_height` / `fps`：RGB 流参数。
 - `cameras[].intrinsics_path`：相机启动后写入 active profile 内参的位置，也是后续标定使用的内参路径。
 - `cameras[].enable_depth`：是否同时采集深度图；当前标定只使用 RGB，深度接口是为后续功能预留。
+- `preview.enabled` / `preview.scale`：是否打开实时预览窗口，以及预览缩放比例；不影响保存图像分辨率。
 - `sampling.mode`：`timed` 定时采集或 `manual` 手动采集。
 - `sampling.interval_s`：定时模式下的采样间隔。
 - `sampling.max_samples`：采样数量上限。

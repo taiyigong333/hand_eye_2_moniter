@@ -207,6 +207,7 @@ configs/live_collection.example.json
 - `robot.host`：UR7e IP。
 - `robot.program`：示教器中的 `autoHandEye.urp`。
 - `cameras`：两台 RealSense 的序列号、分辨率、图像文件名、内参保存路径和可选深度图开关。
+- `preview`：采集时的双相机 OpenCV 预览窗口，默认开启。
 - `sampling`：`timed` 定时采集或 `manual` 手动采集。
 - `calibration`：采集结束后传给 `calib.py` 的参数。
 
@@ -231,4 +232,4 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --mode manual
 ```
 
-手动模式默认按 `c` 保存一次，按 `q` 结束。更多细节见 `docs/4_live_collection_workflow.md`。
+采集默认会打开两个预览窗口。手动模式默认按 `c` 保存一次，按 `q` 结束；预览窗口聚焦时也能直接使用这两个按键。无桌面显示时可加 `--no_preview`。更多细节见 `docs/4_live_collection_workflow.md`。
