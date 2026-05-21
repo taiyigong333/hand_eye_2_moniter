@@ -130,11 +130,15 @@ data/live_capture/sample_000/
 默认标定输出：
 
 ```text
-outputs/live_calibration/
+outputs/live_calibration_YYYYMMDD_HHMMSS/
 ├── calibration_result.json
 ├── dynamic_end_camera_poses.json
 └── debug_vis/
 ```
+
+当配置或命令行中的输出目录名为 `live_calibration` 时，程序会在目录名后自动追加启动时间戳，避免不同采集轮次互相覆盖。
+
+输出文件和各 JSON 字段含义见 `docs/5_live_calibration_output_reference.md`。
 
 ## 7. 实机注意事项
 

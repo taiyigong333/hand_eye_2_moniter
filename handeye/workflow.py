@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
     mode = args.mode or str(sampling_cfg.get("mode", "timed"))
     dataset_dir = _resolve_path(project_root, args.dataset_dir or config.get("dataset_dir", "data/live_capture"))
     output_dir = _resolve_path(project_root, args.output_dir or config["calibration"].get("output_dir", "outputs/live_calibration"))
+    output_dir = _timestamp_live_calibration_dir(output_dir)
 
     config["dataset_dir"] = str(_relative_or_absolute(project_root, dataset_dir))
     config["calibration"]["output_dir"] = str(_relative_or_absolute(project_root, output_dir))
@@ -345,6 +347,14 @@ def _resolve_path(project_root: Path, value: str | Path) -> Path:
     if path.is_absolute():
         return path
     return project_root / path
+
+
+def _timestamp_live_calibration_dir(path: Path, timestamp: str | None = None) -> Path:
+    # 默认实时标定输出需要按采集轮次隔离，避免覆盖上一轮结果。
+    if path.name.lower() != "live_calibration":
+        return path
+    stamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    return path.with_name(f"{path.name}_{stamp}")
 
 
 def _relative_or_absolute(project_root: Path, path: Path) -> str:

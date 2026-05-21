@@ -1,0 +1,92 @@
+# live_calibration 输出文件与 JSON 字段说明
+
+这份文档说明实时采集后自动标定生成的 `outputs/live_calibration_YYYYMMDD_HHMMSS/` 目录。旧版本或手动指定目录时，也可能看到未带时间戳的 `outputs/live_calibration/`；两者内部文件结构相同。若配置或命令行中的输出目录名正好是 `live_calibration`，当前流程会在运行时自动追加启动时间戳，避免覆盖上一轮结果。
+
+`outputs/live_calibration*` 是本地实验产物，已被 `.gitignore` 忽略；需要长期保留某次结果时，建议把对应目录复制到单独实验记录中，或在文档中记录目录名、命令和关键 JSON 摘要。
+
+## 1. 目录结构
+
+```text
+outputs/live_calibration_YYYYMMDD_HHMMSS/
+├── calibration_result.json
+├── dynamic_end_camera_poses.json
+└── debug_vis/
+    ├── 000_end.jpg
+    ├── 000_fixed.jpg
+    ├── 001_end.jpg
+    ├── 001_fixed.jpg
+    └── ...
+```
+
+- `calibration_result.json`：整轮标定的汇总结果，包含样本数量、标定板配置、手眼结果和固定相机外参。
+- `dynamic_end_camera_poses.json`：每个有效样本对应的末端相机动态位姿列表，便于回放采集轨迹或分析末端相机相对固定相机的运动。
+- `debug_vis/`：每张参与检测的图像对应的 ArUco 角点检测和 PnP 重投影调试图。`*_end.jpg` 对应末端腕部相机，`*_fixed.jpg` 对应外部固定相机；绿色点是检测角点，红色点是重投影点，两者越接近，单帧板位姿估计越可信。
+
+## 2. 坐标系与变换对象约定
+
+代码约定 `T_A_B` 表示“从坐标系 B 到坐标系 A 的齐次变换”，即：
+
+```text
+p_A = T_A_B @ p_B
+```
+
+所有变换对象都使用相同字段：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `matrix_4x4` | `number[4][4]` | 4x4 齐次变换矩阵；左上 3x3 是旋转，右上 3x1 是平移，最后一行应为 `[0, 0, 0, 1]`。 |
+| `translation_xyz_m` | `number[3]` | 平移向量 `[x, y, z]`，单位为米，表达在目标坐标系 A 中。 |
+| `rotation_matrix` | `number[3][3]` | 旋转矩阵，等于 `matrix_4x4` 左上 3x3。 |
+| `rotation_rodrigues` | `number[3]` | OpenCV Rodrigues 旋转向量，单位为弧度，和 `rotation_matrix` 表示同一个旋转。 |
+
+## 3. `calibration_result.json`
+
+顶层字段：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `num_total_samples` | `integer` | `calib.py` 从数据目录中成功读取到的样本数；样本必须包含 `tcp_pose`、`images`，且两路图像文件存在。 |
+| `num_valid_samples` | `integer` | 双相机都成功检测标定板，并通过重投影 RMSE 阈值筛选后的有效样本数。 |
+| `handeye_method` | `string` | OpenCV 手眼标定方法名称，对应命令行 `--handeye_method`，可选 `tsai`、`park`、`horaud`、`andreff`、`daniilidis`。 |
+| `board_config` | `object` | 本轮标定使用的标定板几何配置摘要。 |
+| `T_ee_cam_end` | `transform object` | 末端相机坐标系到机械臂末端坐标系的变换，即 `p_ee = T_ee_cam_end @ p_cam_end`。这是眼在手上结果。 |
+| `T_base_board` | `transform object` | 标定板坐标系到机器人基座坐标系的变换，即 `p_base = T_base_board @ p_board`。 |
+| `T_base_cam_fixed` | `transform object` | 外部固定相机坐标系到机器人基座坐标系的变换，即 `p_base = T_base_cam_fixed @ p_cam_fixed`。这是固定相机外参。 |
+
+`board_config` 在当前实时配置 `interleaved_checker` 下包含：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `board_layout` | `string` | 标定板布局类型；当前实时流程使用 `interleaved_checker`。 |
+| `grid_cols` | `integer` | 棋盘总列数，包含 ArUco 格和纯黑格。 |
+| `grid_rows` | `integer` | 棋盘总行数，包含 ArUco 格和纯黑格。 |
+| `tag_size_m` | `number` | ArUco marker 外边长，单位为米。 |
+| `cell_pitch_m` | `number` | 棋盘单元格边长，单位为米；marker 居中放在单元格内。 |
+| `marker_margin_in_cell_m` | `number` | marker 边缘到单元格边缘的单侧留白，单位为米。 |
+| `top_left_is_tag` | `boolean` | 左上角单元格是否为 ArUco marker，用于没有 `id_map_json` 时推断 marker 排布。 |
+| `tag_family` | `string` | 标定板 tag 家族标识，当前兼容字段主要用于记录。 |
+| `num_tags` | `integer` | 标定板中可用 marker 的数量。 |
+
+如果将来使用 `regular_aprilgrid`，`board_config` 会改为记录 `tag_cols`、`tag_rows`、`tag_size_m`、`tag_spacing_ratio`、`tag_family` 和 `num_tags`。
+
+## 4. `dynamic_end_camera_poses.json`
+
+该文件是数组，每个元素对应一个有效样本。数组顺序沿用样本 JSON 的排序和有效筛选结果。
+
+单个元素字段：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `sample_json` | `string` | 对应采集样本的 `pose.json` 路径；通常位于 `data/live_capture/sample_xxx/pose.json`。 |
+| `timestamp` | `string \| null` | 样本采集时间戳，直接来自对应 `pose.json`；若原始样本没有该字段则为 `null`。 |
+| `T_base_cam_end` | `transform object` | 当前样本时刻，末端相机坐标系到机器人基座坐标系的变换，即 `T_base_ee @ T_ee_cam_end`。 |
+| `T_cam_fixed_cam_end` | `transform object` | 当前样本时刻，末端相机坐标系到固定相机坐标系的相对变换，即 `inverse(T_base_cam_fixed) @ T_base_cam_end`。 |
+
+`dynamic_end_camera_poses.json` 不重新保存图像、关节角或原始 TCP；这些信息仍在 `sample_json` 指向的采集样本目录中。
+
+## 5. 使用建议
+
+- 下游若只需要固定相机外参，优先读取 `calibration_result.json` 中的 `T_base_cam_fixed.matrix_4x4`。
+- 下游若要把末端相机点云或检测结果投到机器人基座坐标系，按样本读取 `dynamic_end_camera_poses.json` 中对应的 `T_base_cam_end.matrix_4x4`。
+- 对结果做人工检查时，先看 `num_valid_samples` 是否足够，再抽查 `debug_vis/*_end.jpg` 和 `debug_vis/*_fixed.jpg` 中绿色点与红色点是否基本重合。
+- 不要把 `outputs/live_calibration*` 当作稳定输入数据目录；它是每轮运行产生的结果目录，默认不进 Git。

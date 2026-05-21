@@ -62,7 +62,8 @@ configs/live_collection.example.json
 - `preview.enabled`：默认打开两路 RGB 预览窗口。
 - `sampling.mode`：`timed` 定时采集，或 `manual` 手动采集。
 - `sampling.interval_s` / `sampling.max_samples`：定时采样间隔和数量。
-- `calibration.output_dir`：自动标定结果输出目录。
+- `calibration.output_dir`：自动标定结果输出目录；默认 `outputs/live_calibration` 会在运行时自动追加时间戳。
+- `live_calibration` 输出文件和 JSON 字段含义见 `docs/5_live_calibration_output_reference.md`。
 
 先 dry-run，不连接机器人和相机：
 
@@ -143,11 +144,13 @@ depth_m = raw_value * depth_scale_m
 自动标定结果默认输出到：
 
 ```text
-outputs/live_calibration/
+outputs/live_calibration_YYYYMMDD_HHMMSS/
 ├── calibration_result.json
 ├── dynamic_end_camera_poses.json
 └── debug_vis/
 ```
+
+结果文件和各 JSON 字段含义见 `docs/5_live_calibration_output_reference.md`。
 
 ## 7. 常用变体
 

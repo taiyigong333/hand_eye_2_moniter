@@ -17,6 +17,7 @@
 - 当前项目支持双相机联合流程下的眼在手上和眼在手外结果输出。
 - 当前项目暂不支持只用固定相机独立求解眼在手外标定。
 - 新增实时采集入口 `scripts/collect_and_calibrate.py`，可加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、打开双 RealSense RGB 预览窗口、采集图像，并在采集结束后自动调用 `calib.py`。
+- `docs/5_live_calibration_output_reference.md` 记录 `live_calibration` 输出文件结构和各 JSON 字段含义，后续改动输出结构时需要同步更新。
 - `temp/` 目录只作为本地参考材料，已加入 `.gitignore`，主流程不会导入或调用其中脚本。
 
 ## 常用命令

@@ -30,6 +30,7 @@
 - [docs/2_hand_eye_calibration_process.md](docs/2_hand_eye_calibration_process.md)：眼在手上与眼在手外的标定流程，以及当前项目支持状态。
 - [docs/3_project_handoff.md](docs/3_project_handoff.md)：当前仓库状态、验证记录和后续维护注意事项。
 - [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)：UR7e + 双 RealSense 实时采集和自动标定流程。
+- [docs/5_live_calibration_output_reference.md](docs/5_live_calibration_output_reference.md)：`live_calibration` 输出文件和 JSON 字段说明。
 
 ## 使用方式总览
 
@@ -209,6 +210,8 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 }
 ```
 
+运行时如果标定输出目录名是 `live_calibration`，程序会自动追加本轮启动时间戳，避免覆盖上一轮结果。
+
 采集数据默认写入：
 
 ```text
@@ -236,7 +239,7 @@ sample_000/
 实时采集结束后的自动标定结果默认写入：
 
 ```text
-outputs/live_calibration/
+outputs/live_calibration_YYYYMMDD_HHMMSS/
 ├── calibration_result.json
 ├── dynamic_end_camera_poses.json
 └── debug_vis/
