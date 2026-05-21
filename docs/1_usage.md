@@ -18,6 +18,8 @@
 - `tools/detect.py`：对单张图片尝试多个 ArUco / AprilTag 字典，辅助确认标定板字典类型。
 - `tools/make_aruco_id_map.py`：根据一张清晰标定板图片生成 marker ID 到棋盘格行列的映射。
 - `scripts/run_current_calibration.ps1`：使用当前样例数据运行完整标定。
+- `scripts/collect_and_calibrate.py`：通过 UR RTDE 和双 RealSense 实时采集样本，并在结束后自动调用标定。
+- `configs/live_collection.example.json`：实时采集配置示例。
 - `configs/intr_d405_1280x720.json`：末端 D405 相机内参示例。
 - `configs/intr_d435i_1920x1080.json`：固定 D435i 相机内参示例。
 - `assets/boards/aruco_id_map_new.json`：当前标定板的 ID 映射。
@@ -38,10 +40,13 @@ conda activate hand_eye
 - `python=3.10`
 - `numpy`
 - `opencv-contrib-python`
+- `pyrealsense2`
+- `ur-rtde`
 
 说明：
 
 - 必须使用 `opencv-contrib-python`，因为代码依赖 `cv2.aruco`。
+- 实时采集依赖 `pyrealsense2` 和 `ur-rtde`；只跑已有样本标定时不需要连接相机或机器人。
 - `pupil-apriltags` 在 `calib.py` 中只作为旧版 AprilTag 分支的可选依赖，当前 ArUco 主流程不需要它。
 - 如果只想临时运行，也可以直接调用环境内 Python：
 
@@ -188,3 +193,42 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help
 - 有效样本数是否合理。
 - `debug_vis` 中绿色检测点和红色重投影点是否基本重合。
 - `T_base_board`、`T_base_cam_fixed` 的一致性统计是否没有明显恶化。
+
+## 9. 实时采集入口
+
+配置文件：
+
+```text
+configs/live_collection.example.json
+```
+
+配置中包含：
+
+- `robot.host`：UR7e IP。
+- `robot.program`：示教器中的 `autoHandEye.urp`。
+- `cameras`：两台 RealSense 的序列号、分辨率、图像文件名、内参保存路径和可选深度图开关。
+- `sampling`：`timed` 定时采集或 `manual` 手动采集。
+- `calibration`：采集结束后传给 `calib.py` 的参数。
+
+先检查配置和最终标定命令：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run
+```
+
+定时采集并自动标定：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json
+```
+
+手动模式：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --mode manual
+```
+
+手动模式默认按 `c` 保存一次，按 `q` 结束。更多细节见 `docs/4_live_collection_workflow.md`。

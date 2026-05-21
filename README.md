@@ -14,6 +14,7 @@
 ├── configs/                       # 相机内参
 ├── data/                          # 标定样本和 npz 检查输出
 ├── docs/                          # 使用说明、流程说明、交接文档
+├── handeye/                       # RTDE、RealSense 和实时采集流程模块
 ├── outputs/                       # 已生成的标定结果
 ├── scripts/                       # 可直接运行的项目脚本
 ├── tools/                         # 数据转换、检测和标定板映射工具
@@ -27,6 +28,7 @@
 - [docs/1_usage.md](docs/1_usage.md)：项目使用方式、数据格式、常用命令和输出解释。
 - [docs/2_hand_eye_calibration_process.md](docs/2_hand_eye_calibration_process.md)：眼在手上与眼在手外的标定流程，以及当前项目支持状态。
 - [docs/3_project_handoff.md](docs/3_project_handoff.md)：当前仓库状态、验证记录和后续维护注意事项。
+- [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)：UR7e + 双 RealSense 实时采集和自动标定流程。
 
 ## 快速运行
 
@@ -65,3 +67,20 @@ python calib.py `
 ```
 
 当前仓库已经包含一份示例输出：`outputs/calib_output_correct_intr/calibration_result.json`。
+
+## 实时采集
+
+真机采集入口：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run
+```
+
+确认 `configs/live_collection.example.json` 中的机器人 IP、RealSense 序列号和采样参数后，运行：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json
+```
+
+该流程会加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。

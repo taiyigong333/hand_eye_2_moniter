@@ -7,3 +7,6 @@ __pycache__/
 # 本地临时验证输出
 _verify*/
 verification_output/
+temp/
+data/live_capture*/
+outputs/live_calibration*/

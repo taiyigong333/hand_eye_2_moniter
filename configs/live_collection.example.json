@@ -1,0 +1,66 @@
+{
+  "robot": {
+    "host": "192.168.1.88",
+    "dashboard_port": 29999,
+    "program": "autoHandEye.urp",
+    "load_program": true,
+    "play_after_load": true,
+    "stop_before_load": false
+  },
+  "refresh_intrinsics_from_device": true,
+  "dataset_dir": "data/live_capture",
+  "cameras": [
+    {
+      "role": "end",
+      "camera_index": 0,
+      "camera_name": "wrist_camera",
+      "serial": "419122270341",
+      "color_width": 1280,
+      "color_height": 720,
+      "fps": 30,
+      "image_file": "cam0_wrist.png",
+      "intrinsics_path": "configs/intr_d405_1280x720.json",
+      "enable_depth": false,
+      "depth_file": "depth0_wrist.png"
+    },
+    {
+      "role": "fixed",
+      "camera_index": 1,
+      "camera_name": "main_camera",
+      "serial": "254522072098",
+      "color_width": 1920,
+      "color_height": 1080,
+      "fps": 30,
+      "image_file": "cam1_main.png",
+      "intrinsics_path": "configs/intr_d435i_1920x1080.json",
+      "enable_depth": false,
+      "depth_file": "depth1_main.png"
+    }
+  ],
+  "sampling": {
+    "mode": "timed",
+    "interval_s": 2.0,
+    "max_samples": 35,
+    "manual_capture_key": "c",
+    "manual_stop_key": "q"
+  },
+  "calibration": {
+    "min_samples": 5,
+    "dataset_dir": "data/live_capture",
+    "fixed_camera_index": 1,
+    "end_camera_index": 0,
+    "intr_fixed": "configs/intr_d435i_1920x1080.json",
+    "intr_end": "configs/intr_d405_1280x720.json",
+    "board_layout": "interleaved_checker",
+    "grid_cols": 20,
+    "grid_rows": 15,
+    "tag_size": 0.015,
+    "cell_size": 0.019,
+    "aruco_dict": "DICT_6X6_250",
+    "top_left_is_tag": true,
+    "id_map_json": "assets/boards/aruco_id_map_new.json",
+    "max_reproj_rmse": 10.0,
+    "translation_scale": 1.0,
+    "output_dir": "outputs/live_calibration"
+  }
+}
