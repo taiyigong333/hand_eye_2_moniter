@@ -13,10 +13,11 @@
 ## 2. 主要文件
 
 - `calib.py`：主标定脚本，读取数据集、相机内参、标定板配置并输出标定结果。
-- `npz.py`：将原始 `.npz` 数据导出为 `data/dataset_from_npz/sample_xxx/` 格式。
-- `inspect_npz_layout.py`：检查 `.npz` 内部 key、shape 和图像样例，用于确认数据布局。
-- `detect.py`：对单张图片尝试多个 ArUco / AprilTag 字典，辅助确认标定板字典类型。
-- `make_aruco_id_map.py`：根据一张清晰标定板图片生成 marker ID 到棋盘格行列的映射。
+- `tools/npz.py`：将原始 `.npz` 数据导出为 `data/dataset_from_npz/sample_xxx/` 格式。
+- `tools/inspect_npz_layout.py`：检查 `.npz` 内部 key、shape 和图像样例，用于确认数据布局。
+- `tools/detect.py`：对单张图片尝试多个 ArUco / AprilTag 字典，辅助确认标定板字典类型。
+- `tools/make_aruco_id_map.py`：根据一张清晰标定板图片生成 marker ID 到棋盘格行列的映射。
+- `scripts/run_current_calibration.ps1`：使用当前样例数据运行完整标定。
 - `configs/intr_d405_1280x720.json`：末端 D405 相机内参示例。
 - `configs/intr_d435i_1920x1080.json`：固定 D435i 相机内参示例。
 - `assets/boards/aruco_id_map_new.json`：当前标定板的 ID 映射。
@@ -82,13 +83,13 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help
 如果原始数据是 `.npz`，先检查布局：
 
 ```powershell
-python inspect_npz_layout.py data.npz --index 0 --out_dir data/npz_inspect
+python tools/inspect_npz_layout.py data.npz --index 0 --out_dir data/npz_inspect
 ```
 
 如果 `.npz` 包含当前脚本期望的 `tcp_poses`、`joint_angles`、`images_main`、`images_wrist`，可以导出数据集：
 
 ```powershell
-python npz.py data.npz --out_dir data/dataset_from_npz
+python tools/npz.py data.npz --out_dir data/dataset_from_npz
 ```
 
 ## 5. 生成标定板 ID 映射
@@ -98,7 +99,7 @@ python npz.py data.npz --out_dir data/dataset_from_npz
 示例命令：
 
 ```powershell
-python make_aruco_id_map.py assets/boards/board.jpg `
+python tools/make_aruco_id_map.py assets/boards/board.jpg `
   --aruco_dict DICT_6X6_250 `
   --grid_cols 20 `
   --grid_rows 15 `
@@ -122,6 +123,12 @@ python make_aruco_id_map.py assets/boards/board.jpg `
 ## 6. 运行主标定
 
 当前数据对应的完整命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1
+```
+
+等价的完整命令：
 
 ```powershell
 python calib.py `
@@ -172,7 +179,7 @@ python calib.py `
 修改代码后建议至少运行：
 
 ```powershell
-F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m compileall calib.py detect.py inspect_npz_layout.py make_aruco_id_map.py npz.py
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m compileall calib.py tools/detect.py tools/inspect_npz_layout.py tools/make_aruco_id_map.py tools/npz.py
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help
 ```
 

@@ -15,11 +15,11 @@
 ├── data/                          # 标定样本和 npz 检查输出
 ├── docs/                          # 使用说明、流程说明、交接文档
 ├── outputs/                       # 已生成的标定结果
+├── scripts/                       # 可直接运行的项目脚本
+├── tools/                         # 数据转换、检测和标定板映射工具
 ├── calib.py                       # 主标定入口
-├── make_aruco_id_map.py           # 生成标定板 ID 映射
-├── inspect_npz_layout.py          # 检查 npz 数据布局
-├── npz.py                         # 将 npz 导出成样本目录
-└── detect.py                      # 检测单张图的 marker 字典
+├── environment.yml                # hand_eye 环境依赖
+└── README.md
 ```
 
 ## 文档
@@ -38,6 +38,12 @@ conda activate hand_eye
 ```
 
 在仓库根目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1
+```
+
+等价的完整命令是：
 
 ```powershell
 python calib.py `

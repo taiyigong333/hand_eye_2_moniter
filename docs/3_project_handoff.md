@@ -28,6 +28,12 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help
 运行当前示例标定：
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1
+```
+
+等价的完整命令：
+
+```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py `
   --dataset_dir data/dataset_from_npz `
   --fixed_camera_index 1 `
@@ -64,8 +70,9 @@ conda activate hand_eye
 
 本次已完成的验证：
 
-- `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m compileall calib.py detect.py inspect_npz_layout.py make_aruco_id_map.py npz.py`
+- `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m compileall calib.py tools/detect.py tools/inspect_npz_layout.py tools/make_aruco_id_map.py tools/npz.py`
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py --help`
+- `powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1 -OutputDir _verify_calib_output`
 - 使用 `data/dataset_from_npz`、`configs/` 和 `assets/boards/aruco_id_map_new.json` 完整运行主标定，读取 35 个样本，有效样本 34 个，并成功输出 `calibration_result.json`、`dynamic_end_camera_poses.json` 和 `debug_vis/*.jpg` 到临时验证目录。
 
 这个目录在当前 Windows 环境下可能触发 Git 的 `dubious ownership` 检查。可以对本仓库使用 per-command 方式运行 Git：
@@ -80,5 +87,5 @@ git -c safe.directory=F:/research/guo/hand-eye/calibration status --short --bran
 
 - 如果要新增单相机眼在手外支持，优先在 `calib.py` 中新增显式 `--mode`，不要复用当前双相机路径的隐式行为。
 - 如果要复现实验结果，先固定 OpenCV 版本，因为 `cv2.aruco` 新旧 API 兼容分支可能影响检测细节。
-- 如果替换标定板或重拍板图，先重新运行 `make_aruco_id_map.py`，不要沿用旧的 `assets/boards/aruco_id_map_new.json`。
-- 如果采集新的 `.npz`，先用 `inspect_npz_layout.py` 确认 key 和 shape，再决定是否可以直接使用 `npz.py`。
+- 如果替换标定板或重拍板图，先重新运行 `tools/make_aruco_id_map.py`，不要沿用旧的 `assets/boards/aruco_id_map_new.json`。
+- 如果采集新的 `.npz`，先用 `tools/inspect_npz_layout.py` 确认 key 和 shape，再决定是否可以直接使用 `tools/npz.py`。
