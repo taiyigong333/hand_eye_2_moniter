@@ -1,5 +1,5 @@
 # UR7e RealSense 手眼标定
-
+本代码基于Xiangyi Wang同学的代码改造，主要添加的实现是半自动化实现手眼标定。
 这个仓库用于 UR7e 机械臂与双 RealSense 相机的手眼标定。当前数据中：
 
 - `cam0_wrist.png` / `camera_index=0` 是末端腕部相机，用于眼在手上标定。
