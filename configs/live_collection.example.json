@@ -2,7 +2,7 @@
   "robot": {
     "host": "192.168.1.88",
     "dashboard_port": 29999,
-    "program": "autoHandEye.urp",
+    "program": "autoHandEye2.urp",
     "load_program": true,
     "play_after_load": true,
     "stop_before_load": false
