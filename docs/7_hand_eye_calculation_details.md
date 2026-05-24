@@ -1,0 +1,288 @@
+# 手眼标定计算细节、数据要求与误差来源
+
+本文档说明 `calib.py` 当前实际执行的计算过程，重点解释眼在手上、眼在手外两类问题的数学关系，以及本仓库的数据必须满足哪些条件。
+
+## 1. 坐标和矩阵约定
+
+代码统一使用 `T_A_B` 表示“从 `B` 坐标系变换到 `A` 坐标系”的齐次矩阵：
+
+```text
+p_A = T_A_B @ p_B
+```
+
+常用坐标系如下：
+
+| 名称 | 含义 |
+| --- | --- |
+| `base` | 机器人基座坐标系 |
+| `ee` / `gripper` | 机器人末端坐标系，代码中把 RTDE 的 TCP 位姿当作 `T_base_ee` |
+| `cam_end` | 安装在末端的腕部相机 |
+| `cam_fixed` | 机器人外部的固定相机 |
+| `board` | ArUco / AprilTag 标定板坐标系 |
+
+因此输出矩阵的使用方向是：
+
+```text
+p_ee   = T_ee_cam_end      @ p_cam_end
+p_base = T_base_board      @ p_board
+p_base = T_base_cam_fixed  @ p_cam_fixed
+```
+
+下游固定相机抓取如果要把固定相机坐标系中的点变到机器人基座坐标系，应读取 `calibration_result.json` 中的 `T_base_cam_fixed.matrix_4x4`。
+
+## 2. 当前标定主流程
+
+`calib.py` 的主流程可以拆成四段。
+
+第一段，读取数据。`load_samples()` 扫描 `dataset_dir` 下的 `*.json`，只保留同时包含 `tcp_pose` 和 `images` 的样本，并根据 `--end_camera_index`、`--fixed_camera_index` 找到两路图像。`tcp_pose_to_T_base_ee()` 把 `[x, y, z, rx, ry, rz]` 转成 `T_base_ee`，其中 `rx, ry, rz` 是 Rodrigues 旋转向量。
+
+第二段，估计每张图中的标定板位姿。`BoardModel` 根据 `--board_layout`、`--tag_size`、`--cell_size`、`--grid_cols`、`--grid_rows`、`--id_map_json` 等参数生成每个 marker 角点在 `board` 坐标系下的三维坐标。`ArucoBoardPoseEstimator.estimate_board_pose()` 检测图像中的 marker，建立三维角点和二维像素点的对应关系，然后用 `cv2.solvePnP()` 求：
+
+```text
+T_cam_end_board
+T_cam_fixed_board
+```
+
+这里 `T_cam_board` 表示从标定板到相机的变换。随后代码用重投影误差 `reproj_rmse` 过滤单帧结果，任一路相机超过 `--max_reproj_rmse` 的样本会被跳过。
+
+第三段，眼在手上标定。`compute_handeye_eye_in_hand()` 把多组 `T_base_ee` 和 `T_cam_end_board` 传给 `cv2.calibrateHandEye()`，求出：
+
+```text
+T_ee_cam_end
+```
+
+第四段，估计固定相机外参。代码先用腕部相机结果把标定板放到机器人基座坐标系，再用固定相机看到的同一块标定板反推出固定相机在基座中的位姿：
+
+```text
+T_base_board_i      = T_base_ee_i @ T_ee_cam_end @ T_cam_end_board_i
+T_base_cam_fixed_i  = T_base_board @ inverse(T_cam_fixed_board_i)
+```
+
+多个样本得到的候选矩阵会通过 `average_transforms()` 求平均：平移取算术平均，旋转先转四元数，再用特征向量方式求平均。最终写入：
+
+```text
+calibration_result.json
+dynamic_end_camera_poses.json
+debug_vis/*.jpg
+```
+
+## 3. 眼在手上的计算方法
+
+眼在手上表示相机刚性安装在末端，末端运动时相机一起运动。未知量是末端相机到末端坐标系的固定外参：
+
+```text
+X = T_ee_cam_end
+```
+
+对第 `i` 个有效样本，代码有两个观测：
+
+```text
+G_i = T_base_ee_i
+C_i = T_cam_end_board_i
+```
+
+如果标定板在采集过程中保持不动，那么同一块标定板在 `base` 中的位姿应保持一致：
+
+```text
+T_base_board = G_i @ X @ C_i
+T_base_board = G_j @ X @ C_j
+```
+
+消去 `T_base_board` 后得到标准手眼方程：
+
+```text
+inverse(G_j) @ G_i @ X = X @ C_j @ inverse(C_i)
+```
+
+也就是：
+
+```text
+A_ij @ X = X @ B_ij
+```
+
+`cv2.calibrateHandEye()` 接收的是每个样本的绝对位姿，并在内部构造相对运动。当前代码传入的方向正好对应 OpenCV 参数：
+
+| OpenCV 参数 | 当前代码传入 | 含义 |
+| --- | --- | --- |
+| `R_gripper2base`, `t_gripper2base` | `T_base_ee` | 末端到机器人基座 |
+| `R_target2cam`, `t_target2cam` | `T_cam_end_board` | 标定板到末端相机 |
+
+OpenCV 返回 `R_cam2gripper`, `t_cam2gripper`，代码把它保存为：
+
+```text
+T_ee_cam_end
+```
+
+这个结果的物理含义是：一个点如果在腕部相机坐标系中为 `p_cam_end`，则它在末端坐标系中为 `T_ee_cam_end @ p_cam_end`。
+
+## 4. 眼在手外的计算方法
+
+眼在手外表示相机固定在机器人外部，不随机械臂末端运动。目标通常是：
+
+```text
+T_base_cam_fixed
+```
+
+也就是把固定相机坐标系中的点变换到机器人基座坐标系。
+
+### 4.1 标准独立眼在手外问题
+
+独立眼在手外标定通常需要把标定板刚性安装在机器人末端或夹具上，使 `T_ee_board` 在整个采集过程中保持不变。第 `i` 个样本满足：
+
+```text
+T_base_ee_i @ T_ee_board = T_base_cam_fixed @ T_cam_fixed_board_i
+```
+
+其中未知量是：
+
+```text
+T_ee_board
+T_base_cam_fixed
+```
+
+这类问题可以用 robot-world-hand-eye 形式求解，例如使用 `cv2.calibrateRobotWorldHandEye()` 或等价优化。它的数据约束和眼在手上不同：标定板必须跟随末端运动，否则机器人运动和固定相机观测之间没有足够约束。
+
+当前 `calib.py` 没有实现这个“只有固定相机也能跑”的独立 `eye_to_hand` 分支。
+
+### 4.2 当前项目的双相机固定外参估计
+
+当前项目虽然输出 `T_base_cam_fixed`，但计算方式不是独立 eye-to-hand，而是“双相机联合标定”：
+
+1. 标定板在环境中保持静止。
+2. 腕部相机通过眼在手上先求出 `T_ee_cam_end`。
+3. 每个样本用腕部相机反推出同一块标定板在基座中的候选位姿：
+
+```text
+T_base_board_i = T_base_ee_i @ T_ee_cam_end @ T_cam_end_board_i
+```
+
+4. 对所有 `T_base_board_i` 求平均，得到 `T_base_board`。
+5. 固定相机也看到同一块标定板，PnP 已经给出 `T_cam_fixed_board_i`。
+6. 因为 `T_cam_fixed_board_i` 是 board 到 fixed camera，所以固定相机到 base 的候选变换为：
+
+```text
+T_base_cam_fixed_i = T_base_board @ inverse(T_cam_fixed_board_i)
+```
+
+7. 对所有候选 `T_base_cam_fixed_i` 求平均，得到最终 `T_base_cam_fixed`。
+
+这种方式的优点是能同时得到腕部相机和固定相机结果；代价是固定相机外参会继承腕部相机手眼标定、标定板位姿估计和双相机图像检测的误差。
+
+## 5. 数据要求
+
+### 5.1 样本目录要求
+
+每个有效样本应类似：
+
+```text
+sample_000/
+├── pose.json
+├── cam0_wrist.png
+└── cam1_main.png
+```
+
+`pose.json` 至少要包含：
+
+```json
+{
+  "tcp_pose": [x, y, z, rx, ry, rz],
+  "images": [
+    {"file": "cam0_wrist.png", "camera_index": 0},
+    {"file": "cam1_main.png", "camera_index": 1}
+  ]
+}
+```
+
+`tcp_pose` 的平移单位应为米；如果数据源不是米，必须正确设置 `--translation_scale`。旋转部分必须是 Rodrigues 旋转向量，单位为弧度。
+
+### 5.2 相机和内参要求
+
+- `--intr_end` 必须对应末端腕部相机的实际分辨率和 active color profile。
+- `--intr_fixed` 必须对应外部固定相机的实际分辨率和 active color profile。
+- `--end_camera_index` 和 `--fixed_camera_index` 不能写反。
+- 内参中的畸变参数必须和拍摄图像一致；更换分辨率、裁剪、对齐方式或相机后要重新保存内参。
+
+### 5.3 标定板要求
+
+- `--tag_size`、`--cell_size`、`--grid_cols`、`--grid_rows` 必须使用真实物理尺寸，单位为米。
+- 使用 `interleaved_checker` 时，`--id_map_json` 中 marker ID 到行列和旋转的映射必须正确。
+- 每张参与计算的图像至少要检测到 `--min_tags` 个 marker；代码默认不少于 4 个，实际建议尽量多且覆盖图像不同区域。
+- 标定板应平整、刚性固定，打印比例不能缩放，表面不能明显反光或弯曲。
+
+### 5.4 姿态和同步要求
+
+- 代码硬性要求总样本数不少于 5，检测过滤后的有效样本也不少于 5。
+- 实际建议采集 15 到 30 个以上有效姿态。
+- 眼在手上标定需要明显旋转变化，尤其要绕多个轴改变姿态；只做平移或只在很小角度内转动会退化。
+- 每个样本采集时机器人应处于静止状态，`tcp_pose` 和两张图像要对应同一个稳定姿态。
+- 当前实时采集流程中 `_capture_once()` 先读取 TCP，再采集两路相机图像；如果机器人仍在运动，就会产生时间错配。
+- 双相机联合流程要求标定板在整批采集期间保持不动，固定相机也不能移动。
+
+## 6. 结果不精准的常见原因
+
+### 6.1 单帧 PnP 不准
+
+表现通常是 `reproj_rmse` 偏大，或 `debug_vis/*_end.jpg`、`debug_vis/*_fixed.jpg` 中绿色检测点和红色重投影点明显错位。常见原因：
+
+- 相机内参和当前图像分辨率不匹配。
+- `tag_size`、`cell_size` 或 `id_map_json` 写错。
+- marker 角点检测受模糊、曝光、反光、遮挡影响。
+- 标定板只出现在图像边缘、面积太小或视角太斜。
+- 平面 PnP 在视角变化不足、点分布太集中时不稳定。
+
+### 6.2 手眼方程退化
+
+即使每张图的重投影误差不大，手眼结果也可能不稳定。常见原因：
+
+- 采集姿态缺少旋转变化，只做平移或近似共面运动。
+- 所有样本都从类似角度观察标定板，导致相对运动约束弱。
+- 有效样本数量太少，或者少量离群样本被简单平均后拉偏结果。
+- 机器人 TCP 定义与代码假设的 `ee` 坐标系不一致。
+
+### 6.3 机器人和时间同步误差
+
+- 机器人未停止就读取 TCP 或拍照，造成位姿和图像不对应。
+- 使用目标 TCP 代替实际 TCP，或者 RTDE 读数与图像采样时间不一致。
+- 末端相机支架、标定板支架或固定相机支架有微小松动。
+- 机械臂负载、速度或急停后的姿态恢复造成实际末端位姿偏差。
+
+### 6.4 坐标方向或字段用错
+
+- 把 `T_A_B` 当成 `T_B_A` 使用，缺少 `inverse()`。
+- 下游固定相机外参误用了 `T_ee_cam_end` 或 `T_base_board`，而不是 `T_base_cam_fixed.matrix_4x4`。
+- 把米和毫米混用，或在 `translation_scale`、标定板尺寸、下游配置中重复缩放。
+- 交换了 `cam0_wrist` 和 `cam1_main`，导致眼在手上和固定相机链路混乱。
+
+### 6.5 当前双相机方案的误差传播
+
+当前 `T_base_cam_fixed` 的计算依赖：
+
+```text
+T_base_ee
+T_ee_cam_end
+T_cam_end_board
+T_cam_fixed_board
+```
+
+所以固定相机外参不是只由固定相机图像决定。腕部相机手眼结果、腕部相机 PnP、固定相机 PnP 中任一环节有系统误差，都会传递到 `T_base_cam_fixed`。如果 `T_base_board consistency` 或 `T_base_cam_fixed consistency` 的平移/旋转标准差明显偏大，应先排查上述输入链路。
+
+## 7. 建议检查顺序
+
+重新标定后建议按以下顺序检查：
+
+1. 确认 `--intr_end`、`--intr_fixed`、相机分辨率、相机序列号和 `camera_index` 对应正确。
+2. 确认 `--tag_size`、`--cell_size`、`--grid_cols`、`--grid_rows`、`--id_map_json` 与真实标定板一致。
+3. 运行标定并保存日志：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1 `
+  -OutputDir outputs\verify_handeye_result `
+  | Tee-Object -FilePath outputs\verify_handeye_result.log
+```
+
+4. 查看每个样本的 `end rmse` 和 `fixed rmse`，剔除明显异常样本。
+5. 抽查 `debug_vis`，确认检测点和重投影点基本重合。
+6. 查看 `num_valid_samples` 是否足够，姿态是否包含多方向旋转。
+7. 查看终端中的 `T_base_board consistency` 和 `T_base_cam_fixed consistency` 是否发散。
+8. 最后把 `T_base_cam_fixed.matrix_4x4` 接入下游抓取流程，在低速、安全距离下做闭环验证。
+

@@ -31,6 +31,8 @@
 - [docs/3_project_handoff.md](docs/3_project_handoff.md)：当前仓库状态、验证记录和后续维护注意事项。
 - [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)：UR7e + 双 RealSense 实时采集和自动标定流程。
 - [docs/5_live_calibration_output_reference.md](docs/5_live_calibration_output_reference.md)：`live_calibration` 输出文件和 JSON 字段说明。
+- [docs/6_hand_eye_result_validation.md](docs/6_hand_eye_result_validation.md)：手眼标定结果的重投影、调试图和一致性检查方法。
+- [docs/7_hand_eye_calculation_details.md](docs/7_hand_eye_calculation_details.md)：手眼标定计算细节、数据要求和常见误差来源。
 
 ## 使用方式总览
 
