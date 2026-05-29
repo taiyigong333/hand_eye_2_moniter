@@ -34,6 +34,7 @@
 - [docs/6_hand_eye_result_validation.md](docs/6_hand_eye_result_validation.md)：手眼标定结果的重投影、调试图和一致性检查方法。
 - [docs/7_hand_eye_calculation_details.md](docs/7_hand_eye_calculation_details.md)：手眼标定计算细节、数据要求和常见误差来源。
 - [docs/9_end_to_end_hand_eye_workflow.md](docs/9_end_to_end_hand_eye_workflow.md)：从建立标定板字典、拍摄样本到计算和检查结果的端到端操作流程。
+- [docs/10_assets_boards_reference.md](docs/10_assets_boards_reference.md)：`assets/boards` 目录文件和标定板相关参数说明。
 
 ## 使用方式总览
 

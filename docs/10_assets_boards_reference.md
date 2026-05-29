@@ -1,0 +1,456 @@
+# `assets/boards` 目录与参数说明
+
+本文档专门解释 `assets/boards/` 目录里的文件在当前手眼标定项目中分别做什么，以及它们和 `grid_cols`、`tag_size`、`id_map_json` 等参数之间的关系。
+
+如果你的问题是“`assets/boards` 里的这些参数到底会影响哪里”，先看第 2 节和第 4 节。
+
+## 1. 这个目录解决什么问题
+
+`calib.py` 在做标定板 PnP 时，需要知道：
+
+1. 图像里检测到了哪个 ArUco marker ID。
+2. 这个 marker 在实体标定板上位于哪个棋盘格。
+3. 这个 marker 的四个角点在标定板坐标系中应该按什么顺序排列。
+
+`assets/boards/` 目录就是用来保存这部分“标定板先验信息”的。它不保存相机内参，也不保存机器人位姿；它只描述“这块板长什么样、marker 排布是什么样”。
+
+## 2. 当前目录里每个文件的作用
+
+当前目录内容：
+
+```text
+assets/boards/
+├── board.jpg
+├── aruco_id_map_new.json
+├── aruco_id_map_new.jpg
+└── result.jpg
+```
+
+### 2.1 `board.jpg`
+
+作用：
+
+- 这是用来生成 ID 映射的参考照片。
+- `tools/make_aruco_id_map.py` 会读取它，检测 marker，并结合棋盘四角生成 `aruco_id_map_new.json`。
+
+它的特点：
+
+- 应该拍到整块或大部分标定板。
+- 图像要清晰，能稳定检测出 marker。
+- 四角要能准确定位到“有效棋盘区域”的边界。
+
+代码是否直接读取：
+
+- `calib.py` 不会直接读取 `board.jpg`。
+- 它只在“生成字典”这一步被 `tools/make_aruco_id_map.py` 使用。
+
+### 2.2 `aruco_id_map_new.json`
+
+作用：
+
+- 这是当前项目里最重要的板参数文件。
+- `calib.py` 会通过 `--id_map_json assets/boards/aruco_id_map_new.json` 读取它。
+- 它告诉程序：每个 marker ID 对应哪一个棋盘格，以及角点顺序应该如何旋转。
+
+代码读取位置：
+
+- `calib.py` 会读取 `id_map_json`
+- `calib.py` 会把它写入 `BoardConfig`
+- `BoardModel` 会优先使用 `id_map` 决定 row/col/rot
+
+当前文件的真实情况：
+
+- 当前共有 150 个 marker 条目，对应 ID `0` 到 `149`。
+- `row` 范围是 `0..14`。
+- `col` 范围是 `0..19`。
+- 当前文件里的 `rot` 只有一个取值：`2`。
+
+几个当前文件中的示例：
+
+```json
+"0": [14, 18, 2]
+"23": [12, 12, 2]
+"149": [0, 0, 2]
+```
+
+### 2.3 `aruco_id_map_new.jpg`
+
+作用：
+
+- 这是 `tools/make_aruco_id_map.py --vis` 生成的可视化检查图。
+- 用于人工确认每个 marker 被分配到了正确的棋盘格。
+
+通常会看到：
+
+- OpenCV 检测到的 marker 外框。
+- 蓝色点：检测到的 marker 中心。
+- 红色点：映射后的目标棋盘格中心投影回图像的位置。
+- 黄色连线：蓝点和红点的偏差。
+- 红色文字：类似 `id23->r12c12rot2` 的标注。
+
+代码是否直接读取：
+
+- `calib.py` 不会读取它。
+- 它只是一个人工校验图。
+
+### 2.4 `result.jpg`
+
+作用：
+
+- 当前仓库代码里没有任何地方直接引用 `assets/boards/result.jpg`。
+- 结合目录内容和命名看，它更像一张本地实验/检查产物，而不是运行时必需文件。
+
+建议理解为：
+
+- 它不是当前主流程必需输入。
+- 如果以后不确定来源，先不要让代码依赖它。
+
+## 3. `aruco_id_map_new.json` 里每个参数是什么意思
+
+这个 JSON 的基本结构是：
+
+```json
+{
+  "marker_id": [row, col, rot]
+}
+```
+
+例如：
+
+```json
+{
+  "23": [12, 12, 2]
+}
+```
+
+表示：
+
+- marker ID 是 `23`
+- 它位于棋盘的第 `12` 行、第 `12` 列
+- 它的角点顺序相对于理想棋盘角点需要旋转 `2` 次 90 度，也就是 180 度
+
+下面分别解释。
+
+### 3.1 `row`
+
+含义：
+
+- marker 所在棋盘格的行号。
+
+坐标原点：
+
+- 在 `tools/make_aruco_id_map.py` 里，棋盘有效区域左上角被定义为 `(0, 0)`。
+- 所以 `row=0` 表示最上面一行，`row` 越大越往下。
+
+它怎么被使用：
+
+- `calib.py` 会用 `row * cell_size` 计算这个 marker 在标定板平面里的 y 方向位置。
+
+### 3.2 `col`
+
+含义：
+
+- marker 所在棋盘格的列号。
+
+坐标原点：
+
+- `col=0` 表示最左边一列，`col` 越大越往右。
+
+它怎么被使用：
+
+- `calib.py` 会用 `col * cell_size` 计算这个 marker 在标定板平面里的 x 方向位置。
+
+### 3.3 `rot`
+
+含义：
+
+- marker 四个角点的顺序相对于“理想未旋转棋盘格”需要做多少次 90 度循环偏移。
+
+为什么需要它：
+
+- OpenCV 检测到的 `corners` 顺序与 marker 自身编码朝向有关。
+- 但 `calib.py` 在构造 3D 角点时，必须让 3D 角点顺序和 2D 检测角点顺序一致。
+- 如果顺序不一致，`solvePnP()` 虽然还能跑，但会把角点对应错，最终导致板位姿错误。
+
+在代码中的生成方式：
+
+- `tools/make_aruco_id_map.py` 会尝试四种 `rot`
+- 代码会尝试 `rot=0,1,2,3` 四种循环偏移，选和检测角点最接近的一种。
+
+在代码中的使用方式：
+
+- `calib.py` 会按 `rot` 旋转 3D 角点顺序
+- 最后通过 `np.roll(..., -rot, axis=0)` 旋转 3D 角点顺序。
+
+当前文件为什么 `rot` 全是 `2`：
+
+- 这说明对当前这块实体板和这张生成字典时使用的照片来说，所有 marker 的检测角点顺序都更接近“理想角点旋转 180 度”的情况。
+- 这是当前板子的真实结果，不代表别的板子也一定是 `2`。
+
+## 4. 和 `assets/boards` 配套使用的参数在做什么
+
+这些参数大多不存放在 `assets/boards/` 目录里，而是出现在：
+
+- `tools/make_aruco_id_map.py` 的命令行
+- `configs/live_collection.example.json`
+- `scripts/run_current_calibration.ps1`
+- `calib.py` 的命令行参数
+
+但它们决定了 `assets/boards/` 里的文件应该如何解释，所以必须一起理解。
+
+### 4.1 `id_map_json`
+
+当前值：
+
+```text
+assets/boards/aruco_id_map_new.json
+```
+
+作用：
+
+- 指向当前标定板的 ID 映射文件。
+- 这是 `calib.py` 读取板布局的入口。
+
+影响：
+
+- 写错路径或用错文件，会直接让 marker 的 3D 位置和 2D 角点对应错。
+
+### 4.2 `grid_cols`
+
+当前值：
+
+```text
+20
+```
+
+作用：
+
+- 棋盘总列数。
+- 注意这里统计的是“所有格子”，包含 marker 格和黑色空白格。
+
+影响：
+
+- 它决定 `col` 的合法范围，以及整块棋盘在 cell 坐标中的宽度。
+- 当前文件里 `col` 范围是 `0..19`，正好对应 `grid_cols=20`。
+
+### 4.3 `grid_rows`
+
+当前值：
+
+```text
+15
+```
+
+作用：
+
+- 棋盘总行数，同样包含 marker 格和黑色空白格。
+
+影响：
+
+- 它决定 `row` 的合法范围，以及棋盘总高度。
+- 当前文件里 `row` 范围是 `0..14`，对应 `grid_rows=15`。
+
+### 4.4 `tag_size`
+
+当前值：
+
+```text
+0.015
+```
+
+单位：
+
+- 米
+
+作用：
+
+- ArUco marker 外层黑色正方形的边长。
+
+影响：
+
+- 决定每个 marker 四个 3D 角点在标定板平面中的真实物理大小。
+- 如果它写错，PnP 平移尺度会整体出错。
+
+### 4.5 `cell_size`
+
+当前值：
+
+```text
+0.019
+```
+
+单位：
+
+- 米
+
+作用：
+
+- 棋盘单个格子的边长。
+
+影响：
+
+- 决定相邻 marker 格中心之间的物理间距。
+- `row`/`col` 最终会乘以 `cell_size`，所以它直接影响整块板的坐标尺度。
+
+### 4.6 `top_left_is_tag`
+
+当前值：
+
+```text
+true
+```
+
+作用：
+
+- 表示棋盘左上角第一个格子是否是 marker。
+
+什么时候真正决定布局：
+
+- 在没有 `id_map_json` 的情况下，它会参与默认 row-major 排布推断。
+
+在当前流程中的实际地位：
+
+- 当前流程传了 `id_map_json`，所以具体每个 ID 的 row/col/rot 以 JSON 为准。
+- `top_left_is_tag` 在这种情况下更多是“记录当前棋盘交错方式”和“保留 fallback 行为”。
+
+### 4.7 `aruco_dict`
+
+当前值：
+
+```text
+DICT_6X6_250
+```
+
+作用：
+
+- 指定 OpenCV 用哪个 ArUco 字典去检测 marker。
+
+影响：
+
+- 如果字典写错，图像里 marker 可能根本检测不出来。
+- 它影响“检测到什么 ID”，但不决定这些 ID 在板上对应哪个位置；后者由 `id_map_json` 决定。
+
+## 5. 这些文件和参数在代码里是怎么连起来的
+
+### 5.1 生成字典阶段
+
+命令示例：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe tools\make_aruco_id_map.py assets\boards\board.jpg `
+  --aruco_dict DICT_6X6_250 `
+  --grid_cols 20 `
+  --grid_rows 15 `
+  --top_left_is_tag true `
+  --corners "589,77 3757,203 3849,2603 444,2592" `
+  --tag_size 0.015 `
+  --cell_size 0.019 `
+  --max_cell_dist 0.55 `
+  --out assets\boards\aruco_id_map_new.json `
+  --vis assets\boards\aruco_id_map_new.jpg
+```
+
+这一步会：
+
+1. 从 `board.jpg` 检测 marker ID 和四角点
+2. 用 `corners` 建立像素坐标到棋盘 cell 坐标的变换
+3. 用 `grid_cols` / `grid_rows` / `top_left_is_tag` 定义哪些格子是合法 marker 格
+4. 用 `tag_size` / `cell_size` 估计每个 marker 的理想角点和 `rot`
+5. 生成 `aruco_id_map_new.json` 和 `aruco_id_map_new.jpg`
+
+### 5.2 标定阶段
+
+命令示例：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe calib.py `
+  --board_layout interleaved_checker `
+  --grid_cols 20 `
+  --grid_rows 15 `
+  --tag_size 0.015 `
+  --cell_size 0.019 `
+  --aruco_dict DICT_6X6_250 `
+  --top_left_is_tag true `
+  --id_map_json assets/boards/aruco_id_map_new.json
+```
+
+这一步里：
+
+1. `aruco_dict` 用于检测图像中的 marker
+2. `id_map_json` 提供 ID -> `[row, col, rot]`
+3. `grid_cols` / `grid_rows` / `tag_size` / `cell_size` 定义板子的几何尺寸
+4. `rot` 负责对齐 3D 角点顺序和 2D 检测角点顺序
+5. 最终建立每个 marker 角点的 3D-2D 对应关系，供 `solvePnP()` 求板位姿
+
+## 6. 当前目录里哪些文件是“必需输入”，哪些只是辅助
+
+对当前主标定流程来说：
+
+必需输入：
+
+- `assets/boards/aruco_id_map_new.json`
+
+生成字典时需要：
+
+- `assets/boards/board.jpg`
+
+人工检查辅助：
+
+- `assets/boards/aruco_id_map_new.jpg`
+- `assets/boards/result.jpg`
+
+换句话说：
+
+- 真正被 `calib.py` 读取的是 `aruco_id_map_new.json`
+- `board.jpg` 和 `aruco_id_map_new.jpg` 主要用于“生成和检查这份 JSON 是否正确”
+
+## 7. 最容易写错的地方
+
+### 7.1 把 `tag_size` 和 `cell_size` 混了
+
+正确理解：
+
+- `tag_size` 是 marker 黑边外方框的尺寸
+- `cell_size` 是整个棋盘格尺寸
+
+当前值里：
+
+- `tag_size = 0.015`
+- `cell_size = 0.019`
+
+所以 marker 比格子小，四周有留白。
+
+### 7.2 以为 `top_left_is_tag` 会覆盖 `id_map_json`
+
+不会。
+
+当前代码逻辑是：
+
+- 有 `id_map_json` 时，优先使用 JSON 里的 `row/col/rot`
+- `top_left_is_tag` 只在没有 `id_map_json` 时参与默认排布推断
+
+### 7.3 以为 `aruco_id_map_new.jpg` 是标定输入
+
+不是。
+
+- 它只是检查图。
+- 标定真正读取的是 `aruco_id_map_new.json`。
+
+### 7.4 换了实体板却继续沿用旧 JSON
+
+这是最危险的一类错误之一。
+
+只要以下任一条件变化，就应该重新生成 `aruco_id_map_new.json`：
+
+- 标定板换了
+- 打印版式变了
+- marker 编号排布变了
+- 标定板旋转贴放方式变了
+- 用于生成映射的参考图和当前实体板不一致
+
+## 8. 一句话总结
+
+`assets/boards/` 里真正影响主标定结果的是 `aruco_id_map_new.json`。
+
+它把“检测到的 marker ID”翻译成“标定板上的实际位置和角点顺序”。
+`grid_cols`、`grid_rows`、`tag_size`、`cell_size`、`top_left_is_tag` 和 `aruco_dict` 则决定这份映射应该如何生成、如何解释、以及 PnP 时怎样恢复这块板的真实几何结构。
