@@ -25,16 +25,18 @@
 
 ## 文档
 
-- [docs/quick_use.md](docs/quick_use.md)：精简快速上手流程，包含最常用命令和默认输出位置。
-- [docs/1_usage.md](docs/1_usage.md)：项目使用方式、数据格式、常用命令和输出解释。
-- [docs/2_hand_eye_calibration_process.md](docs/2_hand_eye_calibration_process.md)：眼在手上与眼在手外的标定流程，以及当前项目支持状态。
-- [docs/3_project_handoff.md](docs/3_project_handoff.md)：当前仓库状态、验证记录和后续维护注意事项。
-- [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)：UR7e + 双 RealSense 实时采集和自动标定流程。
-- [docs/5_live_calibration_output_reference.md](docs/5_live_calibration_output_reference.md)：`live_calibration` 输出文件和 JSON 字段说明。
-- [docs/6_hand_eye_result_validation.md](docs/6_hand_eye_result_validation.md)：手眼标定结果的重投影、调试图和一致性检查方法。
-- [docs/7_hand_eye_calculation_details.md](docs/7_hand_eye_calculation_details.md)：手眼标定计算细节、数据要求和常见误差来源。
-- [docs/9_end_to_end_hand_eye_workflow.md](docs/9_end_to_end_hand_eye_workflow.md)：从建立标定板字典、拍摄样本到计算和检查结果的端到端操作流程。
-- [docs/10_assets_boards_reference.md](docs/10_assets_boards_reference.md)：`assets/boards` 目录文件和标定板相关参数说明。
+- [docs/0_快速上手.md](docs/0_快速上手.md)：精简快速上手流程，包含最常用命令和默认输出位置。
+- [docs/1_使用说明.md](docs/1_使用说明.md)：项目使用方式、数据格式、常用命令和输出解释。
+- [docs/2_手眼标定流程.md](docs/2_手眼标定流程.md)：眼在手上与眼在手外的标定流程，以及当前项目支持状态。
+- [docs/3_项目交接.md](docs/3_项目交接.md)：当前仓库状态、验证记录和后续维护注意事项。
+- [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)：UR7e + 双 RealSense 实时采集和自动标定流程。
+- [docs/5_实时标定输出字段说明.md](docs/5_实时标定输出字段说明.md)：`live_calibration` 输出文件和 JSON 字段说明。
+- [docs/6_手眼标定结果验证.md](docs/6_手眼标定结果验证.md)：手眼标定结果的重投影、调试图和一致性检查方法。
+- [docs/7_手眼标定计算细节.md](docs/7_手眼标定计算细节.md)：手眼标定计算细节、数据要求和常见误差来源。
+- [docs/8_手眼标定概念.md](docs/8_手眼标定概念.md)：手眼标定的基本概念、坐标系和结果含义。
+- [docs/9_端到端手眼标定流程.md](docs/9_端到端手眼标定流程.md)：从建立标定板字典、拍摄样本到计算和检查结果的端到端操作流程。
+- [docs/10_标定板资源参考.md](docs/10_标定板资源参考.md)：`assets/boards` 目录文件和标定板相关参数说明。
+- [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)：正式采集前需要确认的机器人、相机、标定板、采样和输出参数。
 
 ## 使用方式总览
 
@@ -152,7 +154,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --config configs\live_collection.example.json
 ```
 
-该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。
+该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)，采集前参数清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)。
 
 ### 常用命令
 
@@ -293,7 +295,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 
 ## 4. 关键配置说明
 
-实时采集前重点检查 `configs/live_collection.example.json`：
+实时采集前重点检查 `configs/live_collection.example.json`。完整清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)：
 
 - `robot.host`：UR7e 的 IP 地址。
 - `robot.program`：示教器中已经保存的 URP 文件名，当前示例配置为 `autoHandEye2.urp`。
