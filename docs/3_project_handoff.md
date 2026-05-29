@@ -16,7 +16,7 @@
 - 当前代码会先求腕部相机的 `T_ee_cam_end`，再基于标定板公共坐标系估计固定相机的 `T_base_cam_fixed`。
 - 当前项目支持双相机联合流程下的眼在手上和眼在手外结果输出。
 - 当前项目暂不支持只用固定相机独立求解眼在手外标定。
-- 新增实时采集入口 `scripts/collect_and_calibrate.py`，可加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、打开双 RealSense RGB 预览窗口、采集图像，并在采集结束后自动调用 `calib.py`。
+- 新增实时采集入口 `scripts/collect_and_calibrate.py`，可加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开双 RealSense RGB 预览窗口、采集图像，并在采集结束后自动调用 `calib.py`。
 - `docs/5_live_calibration_output_reference.md` 记录 `live_calibration` 输出文件结构和各 JSON 字段含义，后续改动输出结构时需要同步更新。
 - `data/dataset_from_npz/` 已加入 `.gitignore`，其中图片和 `pose.json` 不再保存到 Git；需要运行旧样本标定时确认本地目录存在。
 - `temp/` 目录只作为本地参考材料，已加入 `.gitignore`，主流程不会导入或调用其中脚本。
@@ -110,7 +110,7 @@ conda activate hand_eye
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py --dry_run --mode manual --preview_scale 0.25`
 - `F:\Anaconda\Anaconda3\envs\hand_eye\python.exe -m pip install pyrealsense2 ur-rtde`
 
-尚未做实机验证：当前会话没有连接 UR7e 和 RealSense，所以未实际执行 Dashboard 加载 `autoHandEye.urp`、RTDE TCP 读取、双相机采图和预览窗口显示。实机前先确认 `configs/live_collection.example.json` 中的机器人 IP 和两台相机序列号。
+尚未做实机验证：当前会话没有连接 UR7e 和 RealSense，所以未实际执行 Dashboard 加载配置文件中的 URP 程序、RTDE TCP 读取、双相机采图和预览窗口显示。实机前先确认 `configs/live_collection.example.json` 中的机器人 IP、URP 程序名和两台相机序列号。
 
 这个目录在当前 Windows 环境下可能触发 Git 的 `dubious ownership` 检查。可以对本仓库使用 per-command 方式运行 Git：
 

@@ -4,7 +4,7 @@
 
 本流程用于真机采集新的手眼标定数据：
 
-1. PC 通过 UR Dashboard 加载并启动示教器中的 `autoHandEye.urp`。
+1. PC 通过 UR Dashboard 加载并启动配置文件指定的 URP 程序。
 2. PC 通过 RTDE 读取 UR7e 当前 TCP 位姿。
 3. PC 同时读取两台 RealSense 的 RGB 图像，并可按配置预留深度图。
 4. 采集期间打开两路 OpenCV 预览窗口，便于观察标定板是否同时在视野内。
@@ -48,7 +48,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 先复制或直接修改 `configs/live_collection.example.json`：
 
 - `robot.host`：UR7e IP，当前示例为 `192.168.1.88`。
-- `robot.program`：示教器中已存在的 URP，当前为 `autoHandEye.urp`。
+- `robot.program`：示教器中已存在的 URP，当前示例配置为 `autoHandEye2.urp`。
 - `cameras[].serial`：两台 RealSense 序列号。建议实机前确认，不建议长期依赖自动枚举。
 - `cameras[].intrinsics_path`：启动相机后会把 active color profile 的内参写成 `calib.py` 可读格式。
 - `cameras[].enable_depth`：设为 `true` 时同时保存深度图；当前标定仍只使用 RGB。
@@ -143,7 +143,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 ## 7. 实机注意事项
 
 - UR 控制柜需要启用 Dashboard server 和 RTDE 访问，且 PC 能访问 `robot.host`。
-- `autoHandEye.urp` 必须已保存在示教器中；Dashboard 的 `load autoHandEye.urp` 只加载示教器已有程序。
+- `robot.program` 指向的 URP 必须已保存在示教器中；Dashboard 的 `load` 只加载示教器已有程序。
 - 两台 RealSense 不要同时被 RealSense Viewer 或其他进程占用。
 - 若换相机、分辨率或 FPS，必须重新读取并保存内参；当前流程默认会在相机启动后覆盖配置里的内参文件。
 - 标定要求每个有效样本中两台相机都能看到标定板，建议采集 15 到 30 组以上姿态变化明显的样本。

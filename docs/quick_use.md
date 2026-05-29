@@ -59,7 +59,7 @@ configs/live_collection.example.json
 重点检查：
 
 - `robot.host`：UR7e IP。
-- `robot.program`：示教器中的 `autoHandEye.urp`。
+- `robot.program`：示教器中的 URP 程序名，当前示例配置为 `autoHandEye2.urp`。
 - `cameras[].serial`：两台 RealSense 序列号。
 - `preview.enabled`：默认打开两路 RGB 预览窗口。
 - `sampling.mode`：`timed` 定时采集，或 `manual` 手动采集。
@@ -84,7 +84,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 
 默认流程：
 
-1. PC 通过 Dashboard 加载并启动 `autoHandEye.urp`。
+1. PC 通过 Dashboard 加载并启动配置文件中的 URP 程序。
 2. UR7e 围绕标定板运动。
 3. PC 通过 RTDE 读取 TCP。
 4. PC 读取两台 RealSense RGB 图像，并打开两个预览窗口。
@@ -164,7 +164,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --skip_calibration
 ```
 
-如果已经在示教器上手动启动 `autoHandEye.urp`，跳过 Dashboard 控制：
+如果已经在示教器上手动启动配置文件中的 URP 程序，跳过 Dashboard 控制：
 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
@@ -192,7 +192,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 
 - PC 能 ping 通 `robot.host`。
 - UR 控制柜已启用 Dashboard server 和 RTDE。
-- `autoHandEye.urp` 已在示教器中。
+- `configs/live_collection.example.json` 中的 `robot.program` 已在示教器中。
 - 两台 RealSense 没有被 RealSense Viewer 占用。
 - 两台相机都能看到标定板。
 - `--dry_run` 打印出的 `calib.py` 参数符合预期。

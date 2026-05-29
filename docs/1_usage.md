@@ -205,7 +205,7 @@ configs/live_collection.example.json
 配置中包含：
 
 - `robot.host`：UR7e IP。
-- `robot.program`：示教器中的 `autoHandEye.urp`。
+- `robot.program`：示教器中的 URP 程序名，当前示例配置为 `autoHandEye2.urp`。
 - `cameras`：两台 RealSense 的序列号、分辨率、图像文件名、内参保存路径和可选深度图开关。
 - `preview`：采集时的双相机 OpenCV 预览窗口，默认开启。
 - `sampling`：`timed` 定时采集或 `manual` 手动采集。

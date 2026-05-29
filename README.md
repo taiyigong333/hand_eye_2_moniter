@@ -33,6 +33,7 @@
 - [docs/5_live_calibration_output_reference.md](docs/5_live_calibration_output_reference.md)：`live_calibration` 输出文件和 JSON 字段说明。
 - [docs/6_hand_eye_result_validation.md](docs/6_hand_eye_result_validation.md)：手眼标定结果的重投影、调试图和一致性检查方法。
 - [docs/7_hand_eye_calculation_details.md](docs/7_hand_eye_calculation_details.md)：手眼标定计算细节、数据要求和常见误差来源。
+- [docs/9_end_to_end_hand_eye_workflow.md](docs/9_end_to_end_hand_eye_workflow.md)：从建立标定板字典、拍摄样本到计算和检查结果的端到端操作流程。
 
 ## 使用方式总览
 
@@ -150,7 +151,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --config configs\live_collection.example.json
 ```
 
-该流程会加载 `autoHandEye.urp`、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。
+该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_live_collection_workflow.md](docs/4_live_collection_workflow.md)。
 
 ### 常用命令
 
@@ -185,7 +186,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --skip_calibration
 ```
 
-如果已经在示教器上手动加载并启动 `autoHandEye.urp`，可以跳过 Dashboard 控制，只读取 RTDE 和相机：
+如果已经在示教器上手动加载并启动配置文件中的 URP 程序，可以跳过 Dashboard 控制，只读取 RTDE 和相机：
 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
@@ -294,7 +295,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 实时采集前重点检查 `configs/live_collection.example.json`：
 
 - `robot.host`：UR7e 的 IP 地址。
-- `robot.program`：示教器中已经保存的 URP 文件名，默认 `autoHandEye.urp`。
+- `robot.program`：示教器中已经保存的 URP 文件名，当前示例配置为 `autoHandEye2.urp`。
 - `cameras[].serial`：RealSense 序列号，建议实机前确认。
 - `cameras[].color_width` / `color_height` / `fps`：RGB 流参数。
 - `cameras[].intrinsics_path`：相机启动后写入 active profile 内参的位置，也是后续标定使用的内参路径。
@@ -314,7 +315,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 
 - UR7e 和 PC 网络互通，PC 能访问 `robot.host`。
 - UR 控制柜已启用 Dashboard server 和 RTDE。
-- `autoHandEye.urp` 已经保存在示教器中。
+- `configs/live_collection.example.json` 中的 `robot.program` 已经保存在示教器中。
 - 两台 RealSense 没有被 RealSense Viewer 或其他程序占用。
 - `configs/live_collection.example.json` 中的 RealSense 序列号、分辨率和 FPS 与实际设备一致。
 - 标定板在每个有效采样姿态中都能同时被两台相机看到。
