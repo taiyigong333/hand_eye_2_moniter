@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Robot + fixed camera + eye-in-hand dual-camera calibration.
+机器人基座 + 外部固定相机 + 末端腕部相机的双相机手眼标定入口。
 
-This version supports two board layouts:
-1) regular_aprilgrid   : every grid location is an AprilTag
-2) interleaved_checker : AprilTag / pure-black squares alternate like a checkerboard
+本脚本支持两类标定板：
+1) regular_aprilgrid   : 每个网格位置都是一个 AprilTag
+2) interleaved_checker : ArUco/AprilTag 与纯黑格像棋盘一样交错排列
 
-For your board, use:
+典型 interleaved_checker 用法：
   --board_layout interleaved_checker \
   --grid_cols 20 \
   --grid_rows 15 \
   --tag_size 0.015 \
-  --top_left_is_tag false   # change to true if your first cell is a tag
+  --top_left_is_tag false   # 如果左上角第一个格子是 marker，则改为 true
 
-Coordinate convention:
-- T_A_B means transform from frame B to frame A.
-- p_A = T_A_B @ p_B
+坐标约定是阅读本文件最重要的前提：
+- T_A_B 表示“从坐标系 B 到坐标系 A”的齐次变换。
+- p_A = T_A_B @ p_B。
+- 例如 T_base_ee 把末端坐标系下的点变到机器人基座坐标系；
+  T_cam_board 把标定板坐标系下的点变到相机坐标系。
+
+本项目采用的计算链路：
+1. 每个样本读取机器人 TCP 位姿，得到 T_base_ee。
+2. 两台相机分别通过 ArUco 角点 + PnP 得到 T_camend_board 和 T_camfixed_board。
+3. 先用腕部相机样本求眼在手上结果 T_ee_cam_end。
+4. 再由 T_base_ee * T_ee_cam_end * T_camend_board 估计固定标定板的 T_base_board。
+5. 最后由 T_base_board * inv(T_camfixed_board) 反推出固定相机外参 T_base_cam_fixed。
 """
 
 import argparse
@@ -42,17 +51,20 @@ except Exception:
 # ----------------------------
 
 def rodrigues_to_matrix(rvec: np.ndarray) -> np.ndarray:
+    """把旋转向量转换成 3x3 旋转矩阵；UR TCP 和 OpenCV PnP 都常用 Rodrigues 表达。"""
     rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
     R, _ = cv2.Rodrigues(rvec)
     return R
 
 
 def matrix_to_rodrigues(R: np.ndarray) -> np.ndarray:
+    """把 3x3 旋转矩阵转换成旋转向量，主要用于把结果写入 JSON 方便人工读取。"""
     rvec, _ = cv2.Rodrigues(R)
     return rvec.reshape(3)
 
 
 def make_transform(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """由旋转 R 和平移 t 组装 4x4 齐次变换矩阵。"""
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = np.asarray(R, dtype=np.float64).reshape(3, 3)
     T[:3, 3] = np.asarray(t, dtype=np.float64).reshape(3)
@@ -60,6 +72,7 @@ def make_transform(R: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 
 def invert_transform(T: np.ndarray) -> np.ndarray:
+    """求刚体变换的逆；对正交旋转矩阵有 R^-1 = R.T，比通用矩阵求逆更稳定。"""
     R = T[:3, :3]
     t = T[:3, 3]
     T_inv = np.eye(4, dtype=np.float64)
@@ -69,6 +82,7 @@ def invert_transform(T: np.ndarray) -> np.ndarray:
 
 
 def compose(*Ts: np.ndarray) -> np.ndarray:
+    """按从左到右的坐标链相乘，例如 compose(T_base_ee, T_ee_cam) 得到 T_base_cam。"""
     out = np.eye(4, dtype=np.float64)
     for T in Ts:
         out = out @ T
@@ -76,6 +90,7 @@ def compose(*Ts: np.ndarray) -> np.ndarray:
 
 
 def rotation_matrix_to_quaternion(R: np.ndarray) -> np.ndarray:
+    """把旋转矩阵转成单位四元数，用于多帧旋转平均。"""
     trace = np.trace(R)
     if trace > 0:
         s = math.sqrt(trace + 1.0) * 2.0
@@ -107,6 +122,7 @@ def rotation_matrix_to_quaternion(R: np.ndarray) -> np.ndarray:
 
 
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    """把单位四元数还原为旋转矩阵。"""
     w, x, y, z = q
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -116,6 +132,13 @@ def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
 
 
 def average_transforms(Ts: List[np.ndarray]) -> np.ndarray:
+    """
+    对多帧刚体变换做一个保守平均。
+
+    平移直接取算术均值；旋转不能逐元素平均，否则会破坏正交性，因此先转成四元数，
+    用 Markley 风格的特征向量平均得到最接近的一致旋转。这里用于把每个有效样本
+    推出的 T_base_board 或 T_base_cam_fixed 汇总成一个最终外参。
+    """
     if not Ts:
         raise ValueError("No transforms to average.")
     t_mean = np.mean(np.array([T[:3, 3] for T in Ts], dtype=np.float64), axis=0)
@@ -135,6 +158,7 @@ def average_transforms(Ts: List[np.ndarray]) -> np.ndarray:
 
 
 def se3_distance(T1: np.ndarray, T2: np.ndarray) -> Tuple[float, float]:
+    """计算两个 SE(3) 变换的相对平移误差和旋转角误差，用于检查跨样本一致性。"""
     dT = invert_transform(T1) @ T2
     trans = float(np.linalg.norm(dT[:3, 3]))
     cos_theta = (np.trace(dT[:3, :3]) - 1.0) / 2.0
@@ -144,6 +168,12 @@ def se3_distance(T1: np.ndarray, T2: np.ndarray) -> Tuple[float, float]:
 
 
 def project_points(T_cam_obj: np.ndarray, object_points: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarray:
+    """
+    按相机内参把物体三维点投影到图像平面。
+
+    T_cam_obj 是 PnP 求出的“物体/标定板 -> 相机”位姿。重投影点与检测角点之间的
+    像素误差越小，说明这张图里的标定板位姿估计越可信。
+    """
     rvec, _ = cv2.Rodrigues(T_cam_obj[:3, :3])
     tvec = T_cam_obj[:3, 3].reshape(3, 1)
     img_pts, _ = cv2.projectPoints(object_points.astype(np.float64), rvec, tvec, K.astype(np.float64), dist.astype(np.float64))
@@ -171,11 +201,13 @@ class BoardConfig:
     top_left_is_tag: bool = False
     cell_size: Optional[float] = None
 
-    # 新增：真实 marker ID 到棋盘格 row/col 的映射
+    # 真实 marker ID 到棋盘格 row/col/角点旋转 的映射；用于非连续、非 row-major 的实体标定板。
     id_map: Optional[Dict[int, Tuple[int, int, int]]] = None
 
 
 class BoardModel:
+    """把检测到的 marker ID 转成标定板坐标系中的三维角点。"""
+
     def __init__(self, cfg: BoardConfig):
         self.cfg = cfg
         self.layout = cfg.board_layout
@@ -231,12 +263,15 @@ class BoardModel:
             "tag_family": self.cfg.tag_family,
             "num_tags": self.num_tags(),
         }
+
     def tag_object_corners(self, tag_id: int) -> Optional[np.ndarray]:
+        """返回某个 marker 四个角点在标定板坐标系下的 3D 坐标，单位为米。"""
         if self.layout == "regular_aprilgrid":
             return self._regular_tag_corners(tag_id)
         return self._interleaved_tag_corners(tag_id)
 
     def _regular_tag_corners(self, tag_id: int) -> Optional[np.ndarray]:
+        """规则 AprilGrid 中，marker ID 默认按从左到右、从上到下排列。"""
         cols = self.cfg.tag_cols
         rows = self.cfg.tag_rows
         if not (0 <= tag_id < cols * rows):
@@ -258,7 +293,8 @@ class BoardModel:
         cols = int(self.cfg.grid_cols)
         rows = int(self.cfg.grid_rows)
 
-        # 优先使用真实 ID -> 棋盘格位置映射
+        # 优先使用真实 ID -> 棋盘格位置映射。实体板上的 ID 往往不是连续 row-major，
+        # 错用默认规则会让 PnP 的 2D-3D 对应关系整体错位，后续手眼结果也会随之错误。
         if self.cfg.id_map is not None:
             rc = self.cfg.id_map.get(int(tag_id), None)
             if rc is None:
@@ -271,7 +307,8 @@ class BoardModel:
 
             return row, col
 
-        # 没有 id_map 时，才使用默认 row-major 规则
+        # 没有 id_map 时，才使用默认 row-major 规则：每行一半格子是 marker，
+        # 由 top_left_is_tag 决定第一行 marker 从第 0 列还是第 1 列开始。
         tags_per_row = cols // 2
         max_tags = tags_per_row * rows
 
@@ -297,14 +334,17 @@ class BoardModel:
             return None
 
         return row, col
-    
+
     def _interleaved_tag_rotation(self, tag_id: int) -> int:
+        """读取实体 marker 在格子里的 90 度旋转次数，保证角点顺序与检测结果一致。"""
         if self.cfg.id_map is not None:
             rc = self.cfg.id_map.get(int(tag_id), None)
             if rc is not None and len(rc) >= 3:
                 return int(rc[2]) % 4
         return 0
+
     def _interleaved_tag_corners(self, tag_id: int) -> Optional[np.ndarray]:
+        """交错棋盘格中，marker 居中放在棋盘单元格里，四角点仍落在 z=0 的板平面。"""
         rc = self._interleaved_tag_cell(tag_id)
         if rc is None:
             return None
@@ -328,12 +368,20 @@ class BoardModel:
             [x0,     y0 + s, 0.0],  # BL
         ], dtype=np.float64)
 
+        # OpenCV 返回 marker 四角点时带有朝向；实体板如果旋转贴放，需要同步旋转 3D
+        # 角点顺序，否则 solvePnP 会把同一个方块的角点对应错。
         rot = self._interleaved_tag_rotation(tag_id)
         corners = np.roll(corners, -rot, axis=0)
 
         return corners
 
     def collect_correspondences(self, detections: List[dict]) -> Tuple[np.ndarray, np.ndarray, List[int]]:
+        """
+        从检测结果构造 PnP 所需的 3D-2D 对应点。
+
+        obj_points 是标定板坐标系中的已知三维角点，img_points 是同一批角点在图像中的
+        像素坐标；这组对应关系直接决定 T_cam_board 的求解质量。
+        """
         obj_points = []
         img_points = []
         used_tag_ids = []
@@ -357,6 +405,7 @@ class BoardModel:
 
 
 def load_intrinsics(path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """加载相机内参 K 和畸变参数 dist；PnP 和重投影检查都依赖同一套内参。"""
     if path.lower().endswith(".json"):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -382,6 +431,13 @@ class Sample:
 
 
 def tcp_pose_to_T_base_ee(tcp_pose: List[float], translation_scale: float = 1.0) -> np.ndarray:
+    """
+    把机器人控制器记录的 TCP 位姿转为 T_base_ee。
+
+    tcp_pose = [x, y, z, rx, ry, rz]，其中 xyz 是 TCP 原点在机器人基座下的位置，
+    rxyz 是末端坐标系相对基座的 Rodrigues 旋转向量。translation_scale 用来兼容
+    毫米/米等不同数据来源，但本项目正常应保持米制。
+    """
     if len(tcp_pose) != 6:
         raise ValueError(f"tcp_pose must have length 6, got {len(tcp_pose)}")
     x, y, z, rx, ry, rz = [float(v) for v in tcp_pose]
@@ -391,6 +447,15 @@ def tcp_pose_to_T_base_ee(tcp_pose: List[float], translation_scale: float = 1.0)
 
 
 def load_samples(dataset_dir: str, fixed_camera_index: int, end_camera_index: int, translation_scale: float) -> List[Sample]:
+    """
+    读取一批同步样本。
+
+    每个有效样本必须同时包含：
+    - 机器人 TCP 位姿，用于得到 T_base_ee；
+    - 固定相机图像，用于估计 T_camfixed_board；
+    - 末端相机图像，用于估计 T_camend_board。
+    缺少任意一项时跳过该样本，因为双相机联合标定需要同一时刻的完整坐标链。
+    """
     json_files = sorted(Path(dataset_dir).rglob("*.json"))
     samples = []
     for jp in json_files:
@@ -494,6 +559,8 @@ def load_samples(dataset_dir: str, fixed_camera_index: int, end_camera_index: in
 #         return T_cam_board, info
 
 class ArucoBoardPoseEstimator:
+    """检测 ArUco marker，并用 PnP 估计标定板相对相机的位姿。"""
+
     def __init__(self, board: BoardModel, aruco_dict_name: str = "DICT_6X6_250"):
         self.board = board
 
@@ -516,6 +583,7 @@ class ArucoBoardPoseEstimator:
             self.detector = None
 
     def detect(self, image_gray: np.ndarray) -> List[dict]:
+        """返回每个 marker 的 ID、四角点像素坐标和中心点。"""
         if self.detector is not None:
             corners, ids, rejected = self.detector.detectMarkers(image_gray)
         else:
@@ -547,10 +615,22 @@ class ArucoBoardPoseEstimator:
         min_tags: int = 4,
         debug_vis_path: Optional[str] = None,
     ) -> Tuple[Optional[np.ndarray], dict]:
+        """
+        从单张图像估计 T_cam_board。
+
+        计算原理：
+        - BoardModel 提供 marker 角点在标定板坐标系下的三维位置 obj_points。
+        - ArUco 检测提供这些角点在图像上的二维像素位置 img_points。
+        - solvePnP 在已知相机内参 K、畸变 dist 的条件下，求解一个刚体变换
+          T_cam_board，使得 obj_points 经过该变换和相机投影后尽量落在 img_points 上。
+        - 得到 T_cam_board 后再做一次重投影，RMSE 用来过滤角点对应错误、内参不匹配
+          或图像质量过差的样本。
+        """
 
         gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         detections = self.detect(gray)
 
+        # PnP 的核心输入：标定板平面上的 3D 角点 + 图像中的 2D 角点。
         obj_points, img_points, used_tag_ids = self.board.collect_correspondences(detections)
 
         info = {
@@ -564,6 +644,8 @@ class ArucoBoardPoseEstimator:
         if len(used_tag_ids) < min_tags or len(obj_points) < 4 * min_tags:
             return None, info
 
+        # solvePnP 返回的是 object/board -> camera 的 rvec/tvec，即本项目记作 T_cam_board。
+        # 注意这里不是 camera -> board；如果后续需要相反方向，必须显式 invert_transform。
         ok, rvec, tvec = cv2.solvePnP(
             obj_points,
             img_points,
@@ -578,6 +660,8 @@ class ArucoBoardPoseEstimator:
         R, _ = cv2.Rodrigues(rvec)
         T_cam_board = make_transform(R, tvec.reshape(3))
 
+        # 用同一个 T_cam_board 把 3D 角点投回图像。检测点和投影点的距离是单帧
+        # 标定板位姿质量的直接证据，后面会用 --max_reproj_rmse 丢弃坏样本。
         proj = project_points(T_cam_board, obj_points, K, dist)
         reproj_err = np.linalg.norm(proj - img_points, axis=1)
         info["reproj_rmse"] = float(np.sqrt(np.mean(reproj_err ** 2)))
@@ -622,6 +706,8 @@ class ArucoBoardPoseEstimator:
         #     cv2.imwrite(debug_vis_path, vis)
 
         return T_cam_board, info
+
+
 # ----------------------------
 # Calibration core
 # ----------------------------
@@ -653,15 +739,39 @@ def compute_handeye_eye_in_hand(
     T_cam_board_list: List[np.ndarray],
     method: int = cv2.CALIB_HAND_EYE_TSAI,
 ) -> np.ndarray:
+    """
+    求腕部相机的眼在手上外参 T_ee_cam_end。
+
+    已知量：
+    - T_base_ee_i：第 i 个样本中，机器人末端到基座的位姿，由 TCP 读数得到。
+    - T_cam_board_i：第 i 个样本中，固定标定板到腕部相机的位姿，由 PnP 得到。
+
+    未知量：
+    - T_ee_cam_end：腕部相机到机器人末端坐标系的固定安装关系。
+
+    核心约束：
+    标定板在机器人基座中不动，所以每一帧都应满足：
+        T_base_board = T_base_ee_i * T_ee_cam_end * T_cam_board_i
+    对任意两帧 i、j 消去固定的 T_base_board，就形成经典手眼方程 A X = X B：
+    - A 来自机器人末端在基座下的相对运动；
+    - B 来自相机观测到的标定板相对运动；
+    - X 就是要求的 T_ee_cam_end。
+
+    OpenCV 的 calibrateHandEye 会内部构造并求解这个方程。这里传入的 gripper2base
+    对应 T_base_ee，target2cam 对应 T_cam_board，返回的 cam2gripper 正好是
+    T_ee_cam_end。
+    """
     R_gripper2base, t_gripper2base = [], []
     R_target2cam, t_target2cam = [], []
 
     for T_base_ee, T_cam_board in zip(T_base_ee_list, T_cam_board_list):
-        # OpenCV wants gripper -> base, i.e. T_base_ee
+        # OpenCV 参数名 gripper2base 的含义是“gripper/末端 -> base”，
+        # 与本项目的 T_base_ee 坐标约定一致，不需要取逆。
         R_gripper2base.append(T_base_ee[:3, :3])
         t_gripper2base.append(T_base_ee[:3, 3].reshape(3, 1))
 
-        # target(board) -> camera, i.e. T_cam_board
+        # target2cam 的含义是“标定目标/标定板 -> 相机”，与 solvePnP 得到的
+        # T_cam_board 一致，也不需要取逆。
         R_target2cam.append(T_cam_board[:3, :3])
         t_target2cam.append(T_cam_board[:3, 3].reshape(3, 1))
 
@@ -673,15 +783,50 @@ def compute_handeye_eye_in_hand(
         method=method,
     )
 
-    # This is T_gripper_cam, same as T_ee_cam_end
+    # OpenCV 返回 cam2gripper，即“相机 -> 末端”，按本项目记法就是 T_ee_cam_end。
     return make_transform(R_cam2gripper, t_cam2gripper.reshape(3))
-def estimate_T_base_board(T_base_ee_list: List[np.ndarray], T_ee_cam_end: np.ndarray, T_cam_board_list: List[np.ndarray]) -> Tuple[np.ndarray, List[np.ndarray]]:
-    Ts = [compose(T_base_ee, T_ee_cam_end, T_cam_board) for T_base_ee, T_cam_board in zip(T_base_ee_list, T_cam_board_list)]
+
+
+def estimate_T_base_board(
+    T_base_ee_list: List[np.ndarray],
+    T_ee_cam_end: np.ndarray,
+    T_cam_board_list: List[np.ndarray],
+) -> Tuple[np.ndarray, List[np.ndarray]]:
+    """
+    用腕部相机手眼结果反推出标定板在机器人基座下的固定位置 T_base_board。
+
+    对每个样本：
+        T_base_board_i = T_base_ee_i * T_ee_cam_end * T_cam_board_i
+    如果手眼结果、PnP 和同步都可靠，这些 T_base_board_i 应该彼此接近。
+    最终返回它们的平均值以及逐样本结果，后者用于一致性统计。
+    """
+    Ts = [
+        compose(T_base_ee, T_ee_cam_end, T_cam_board)
+        for T_base_ee, T_cam_board in zip(T_base_ee_list, T_cam_board_list)
+    ]
     return average_transforms(Ts), Ts
 
 
-def estimate_T_base_cam_fixed(T_base_board: np.ndarray, T_camfixed_board_list: List[np.ndarray]) -> Tuple[np.ndarray, List[np.ndarray]]:
-    Ts = [compose(T_base_board, invert_transform(T_cam_board)) for T_cam_board in T_camfixed_board_list]
+def estimate_T_base_cam_fixed(
+    T_base_board: np.ndarray,
+    T_camfixed_board_list: List[np.ndarray],
+) -> Tuple[np.ndarray, List[np.ndarray]]:
+    """
+    由固定标定板位姿和固定相机观测反推出固定相机外参 T_base_cam_fixed。
+
+    固定相机的 PnP 给出：
+        T_camfixed_board = 固定相机坐标系 <- 标定板坐标系
+    因此它的逆变换 inv(T_camfixed_board) 是：
+        T_board_camfixed = 标定板坐标系 <- 固定相机坐标系
+    再接上已知的 T_base_board：
+        T_base_cam_fixed_i = T_base_board * inv(T_camfixed_board_i)
+
+    多帧结果理论上应相同；这里同样做平均并保留逐样本结果用于一致性检查。
+    """
+    Ts = [
+        compose(T_base_board, invert_transform(T_cam_board))
+        for T_cam_board in T_camfixed_board_list
+    ]
     return average_transforms(Ts), Ts
 
 
@@ -691,6 +836,7 @@ def estimate_T_base_cam_fixed(T_base_board: np.ndarray, T_camfixed_board_list: L
 
 
 def transform_to_dict(T: np.ndarray) -> Dict:
+    """把齐次变换保存成矩阵、平移、旋转矩阵和 Rodrigues 四种形式，便于后续程序和人工检查。"""
     return {
         "matrix_4x4": np.asarray(T, dtype=float).tolist(),
         "translation_xyz_m": np.asarray(T[:3, 3], dtype=float).tolist(),
@@ -710,6 +856,7 @@ def print_transform(name: str, T: np.ndarray) -> None:
 
 
 def summarize_transform_list(name: str, Ts: List[np.ndarray], T_ref: np.ndarray) -> None:
+    """打印逐样本变换相对最终平均结果的离散程度；离散越大，说明标定链路越不稳定。"""
     trans_errs, rot_errs = [], []
     for T in Ts:
         dt, dr = se3_distance(T_ref, T)
@@ -847,6 +994,9 @@ def main():
     T_camend_board_list = []
     T_camfixed_board_list = []
 
+    # 每个样本都必须在两台相机中成功估计标定板位姿，并通过重投影误差过滤。
+    # 这样后续 hand-eye 求解使用的是同一时刻的三段链路：
+    # T_base_ee、T_camend_board、T_camfixed_board。
     for idx, s in enumerate(samples):
         img_end = cv2.imread(str(s.image_end))
         img_fixed = cv2.imread(str(s.image_fixed))
@@ -893,13 +1043,16 @@ def main():
     if len(valid_samples) < 5:
         raise RuntimeError("Too few valid samples after AprilTag detection.")
 
+    # 第一阶段：用末端相机 + 机器人运动求眼在手上外参。
     T_ee_cam_end = compute_handeye_eye_in_hand(T_base_ee_list, T_camend_board_list, method_map[args.handeye_method])
     print_transform("T_ee_cam_end", T_ee_cam_end)
 
+    # 第二阶段：把末端相机看到的同一块固定标定板统一转换到机器人基座坐标系。
     T_base_board, T_base_board_all = estimate_T_base_board(T_base_ee_list, T_ee_cam_end, T_camend_board_list)
     print_transform("T_base_board", T_base_board)
     summarize_transform_list("T_base_board", T_base_board_all, T_base_board)
 
+    # 第三阶段：固定相机也看到了同一块标定板，因此可由 T_base_board 反推出固定相机外参。
     T_base_cam_fixed, T_base_cam_fixed_all = estimate_T_base_cam_fixed(T_base_board, T_camfixed_board_list)
     print_transform("T_base_cam_fixed", T_base_cam_fixed)
     summarize_transform_list("T_base_cam_fixed", T_base_cam_fixed_all, T_base_cam_fixed)
@@ -917,11 +1070,13 @@ def main():
 
     dynamic = []
     for s, T_base_ee in zip(valid_samples, T_base_ee_list):
+        # 腕部相机随机器人末端运动，所以它的基座外参不是常量，需要每帧由 T_base_ee 组合得到。
         T_base_cam_end_i = compose(T_base_ee, T_ee_cam_end)
         dynamic.append({
             "sample_json": str(s.json_path),
             "timestamp": s.raw.get("timestamp", None),
             "T_base_cam_end": transform_to_dict(T_base_cam_end_i),
+            # 表示末端相机坐标系中的点如何转换到固定相机坐标系，便于双相机相对位姿分析。
             "T_cam_fixed_cam_end": transform_to_dict(compose(invert_transform(T_base_cam_fixed), T_base_cam_end_i)),
         })
     save_json(str(Path(args.output_dir) / "dynamic_end_camera_poses.json"), dynamic)
