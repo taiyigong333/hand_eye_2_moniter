@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+根据一张标定板照片生成 ArUco marker ID 到棋盘格位置的映射。
+
+calib.py 做 PnP 时需要两类对应关系：
+- 图像中检测到的 marker ID 和四个 2D 角点；
+- 该 marker 在实体标定板坐标系里的行、列、旋转和 3D 角点。
+
+实体板上的 marker ID 通常不是简单的 row-major 顺序，所以必须用本工具生成
+`id_map_json`。输出格式为：
+
+{
+  "23": [row, col, rot]
+}
+
+其中 row/col 是 marker 所在棋盘格，rot 是检测角点顺序相对棋盘理想角点的 90 度
+循环偏移次数。`calib.py` 会用这三个值恢复 marker 的 3D 角点顺序。
+"""
 
 import argparse
 import json
@@ -9,6 +26,7 @@ from pathlib import Path
 
 
 def str2bool(v):
+    """把命令行里的 true/false 字符串转换为 bool，兼容 PowerShell 常见写法。"""
     if isinstance(v, bool):
         return v
     s = v.lower().strip()
@@ -21,10 +39,15 @@ def str2bool(v):
 
 def parse_corners(s):
     """
+    解析无 GUI 模式下手工传入的棋盘有效区域四角。
+
     Format:
       "x1,y1 x2,y2 x3,y3 x4,y4"
     Order:
       top-left, top-right, bottom-right, bottom-left
+
+    注意这里的四角是“有效棋盘区域”的外边界，不是纸张外边界。顺序错误会直接导致
+    单应变换方向错误，从而把 marker 分配到错误的 row/col。
     """
     pts = []
     for item in s.strip().split():
@@ -36,12 +59,19 @@ def parse_corners(s):
 
 
 def pick_corners_gui(img):
+    """
+    用 OpenCV 窗口交互式点击棋盘四角。
+
+    这个函数只负责获取四个像素点；后续透视变换仍由 main() 统一计算。无桌面环境
+    或需要可复现命令时，推荐直接使用 --corners。
+    """
     points = []
     vis = img.copy()
 
     def on_mouse(event, x, y, flags, param):
         nonlocal vis
         if event == cv2.EVENT_LBUTTONDOWN:
+            # 每次点击后立刻画点和序号，降低四角顺序点错的概率。
             points.append([x, y])
             cv2.circle(vis, (x, y), 6, (0, 0, 255), -1)
             cv2.putText(
@@ -73,6 +103,7 @@ def pick_corners_gui(img):
 
 
 def detect_aruco(img, aruco_dict_name):
+    """检测图片中的 ArUco marker，返回 ID、四角点和中心点。"""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     if not hasattr(cv2, "aruco"):
@@ -83,9 +114,11 @@ def detect_aruco(img, aruco_dict_name):
     params = cv2.aruco.DetectorParameters()
 
     if hasattr(cv2.aruco, "ArucoDetector"):
+        # OpenCV 4.7+ 推荐的新 API。
         detector = cv2.aruco.ArucoDetector(dictionary, params)
         corners, ids, rejected = detector.detectMarkers(gray)
     else:
+        # 兼容旧版 opencv-contrib-python。
         corners, ids, rejected = cv2.aruco.detectMarkers(
             gray, dictionary, parameters=params
         )
@@ -107,6 +140,13 @@ def detect_aruco(img, aruco_dict_name):
 
 
 def make_valid_marker_cells(grid_cols, grid_rows, top_left_is_tag):
+    """
+    枚举 interleaved_checker 中所有合法 marker 单元格。
+
+    interleaved_checker 是 marker 与黑格交错的棋盘。若左上角是 marker，则 row+col
+    为偶数的格子是 marker；否则 row+col 为奇数的格子是 marker。返回的中心点
+    使用“棋盘 cell 坐标”，也就是第 col,row 个格子的中心为 (col+0.5, row+0.5)。
+    """
     cells = []
 
     for row in range(grid_rows):
@@ -123,12 +163,21 @@ def make_valid_marker_cells(grid_cols, grid_rows, top_left_is_tag):
 
 
 def transform_points(H, pts):
+    """用 3x3 单应矩阵批量变换 2D 点；这里用于图像像素坐标和棋盘 cell 坐标互转。"""
     pts = np.asarray(pts, dtype=np.float32).reshape(-1, 1, 2)
     out = cv2.perspectiveTransform(pts, H).reshape(-1, 2)
     return out
 
 
 def main():
+    """
+    主流程：
+    1. 读取整板照片并检测 ArUco。
+    2. 获取棋盘有效区域四角，建立图像像素 -> 棋盘 cell 坐标的单应变换。
+    3. 把每个检测到的 marker 中心投到棋盘坐标，匹配最近的合法 marker 格。
+    4. 根据 marker 四角在 cell 坐标中的位置估计旋转 rot。
+    5. 保存 id_map JSON 和可视化图，供 calib.py 后续 PnP 使用。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="一张能看清整块或大部分标定板的图片")
     parser.add_argument("--out", default="assets/boards/aruco_id_map.json")
@@ -167,12 +216,15 @@ def main():
     print(f"[INFO] detected markers: {len(dets)}")
 
     if args.corners is not None:
+        # 无 GUI 或需要命令可复现时，用显式四角点。
         src = parse_corners(args.corners)
     else:
+        # 有桌面显示时，可人工点击四角。
         src = pick_corners_gui(img)
 
-    # 目标坐标用棋盘 cell 单位
-    # 四角顺序：左上、右上、右下、左下
+    # 目标坐标用棋盘 cell 单位。整块有效棋盘左上角是 (0,0)，右下角是
+    # (grid_cols, grid_rows)，这样每个格子的行列可直接由 cell 坐标解释。
+    # 四角顺序必须和 parse_corners/pick_corners_gui 一致：左上、右上、右下、左下。
     dst = np.array([
         [0, 0],
         [args.grid_cols, 0],
@@ -183,6 +235,7 @@ def main():
     H_img_to_board = cv2.getPerspectiveTransform(src, dst)
     H_board_to_img = np.linalg.inv(H_img_to_board)
 
+    # 合法 marker 格只包含交错棋盘中应该贴有 ArUco 的那些格子，黑格不会被匹配。
     valid_cells = make_valid_marker_cells(
         args.grid_cols,
         args.grid_rows,
@@ -192,6 +245,8 @@ def main():
     id_map = {}
 
     if args.merge is not None:
+        # merge 允许在旧映射基础上补拍局部照片继续完善。若新检测和旧映射冲突，
+        # 后面会打印 WARN 便于人工判断。
         with open(args.merge, "r", encoding="utf-8") as f:
             old = json.load(f)
         id_map = {int(k): [int(v[0]), int(v[1])] for k, v in old.items()}
@@ -199,6 +254,7 @@ def main():
 
     cell_occupied = {}
 
+    # 可视化图先画出 OpenCV 原始检测框，后面再叠加“映射到哪个格子”的检查信息。
     vis = img.copy()
     cv2.aruco.drawDetectedMarkers(
         vis,
@@ -210,9 +266,13 @@ def main():
 
     for d in dets:
         marker_id = d["id"]
+
+        # 把 marker 中心从图像像素坐标投影到棋盘 cell 坐标。
+        # 如果四角点和单应变换正确，中心应该落在某个合法 marker 格中心附近。
         board_center = transform_points(H_img_to_board, d["center"])[0]
 
-        # 找最近的合法 marker 单元格
+        # 找最近的合法 marker 单元格。这里用中心点而不是角点做粗匹配，
+        # 对局部透视误差更稳，也不依赖 marker 在格子里的旋转方向。
         best = None
         best_dist = 1e9
         for row, col, cc in valid_cells:
@@ -222,12 +282,14 @@ def main():
                 best = (row, col, cc)
 
         if best is None or best_dist > args.max_cell_dist:
+            # 距离太远通常意味着四角点、top_left_is_tag、行列数或检测结果存在问题。
             skipped.append((marker_id, board_center.tolist(), best_dist))
             continue
 
         row, col, cc = best
 
-        # 如果两个 ID 被分到同一个 cell，保留距离更近的
+        # 如果两个 ID 被分到同一个 cell，保留中心更接近该格子的检测结果。
+        # 这可以避免误检或边缘畸变导致同一格被重复占用。
         key = (row, col)
         if key in cell_occupied:
             old_id, old_dist = cell_occupied[key]
@@ -243,11 +305,14 @@ def main():
             if old_rc != [row, col]:
                 print(f"[WARN] ID {marker_id} conflict: old={old_rc}, new={[row, col]}")
 
-        #id_map[marker_id] = [row, col]
         # ---------- 估计 marker 在格子里的旋转 ----------
-        # detected marker corners -> board cell coordinate
+        # OpenCV 返回的 corners 顺序跟 marker 自身编码朝向有关；而 calib.py 构造 3D
+        # 角点时需要让 3D 角点顺序和 2D 检测角点顺序一致。因此这里在棋盘 cell
+        # 坐标里比较四种 90 度循环偏移，选误差最小的 rot 保存下来。
         det_board_corners = transform_points(H_img_to_board, d["corners"])
 
+        # marker_ratio 表示 marker 边长占 cell 边长的比例。marker 默认在格子中居中，
+        # margin 是 marker 外边界到 cell 外边界的留白，单位同样是 cell。
         marker_ratio = float(args.tag_size) / float(args.cell_size)
         margin = 0.5 * (1.0 - marker_ratio)
 
@@ -256,8 +321,8 @@ def main():
         x1 = x0 + marker_ratio
         y1 = y0 + marker_ratio
 
-        # 棋盘坐标系里的理想 marker 四角：
-        # TL, TR, BR, BL
+        # 棋盘坐标系里的理想 marker 四角，未考虑实体 marker 旋转时的顺序：
+        # TL, TR, BR, BL。
         ideal_corners = np.array([
             [x0, y0],
             [x1, y0],
@@ -279,7 +344,8 @@ def main():
         id_map[marker_id] = [row, col, best_rot]
         cell_occupied[key] = (marker_id, best_dist)
 
-        # 可视化：蓝色为检测中心，红色为映射后格子中心投回图像
+        # 可视化：蓝色为检测中心，红色为映射后格子中心投回图像。
+        # 两点距离越近，说明该 marker 被分配到这个格子的可信度越高。
         detected_center = d["center"]
         proj_center = transform_points(H_board_to_img, cc)[0]
 
@@ -302,7 +368,7 @@ def main():
             cv2.LINE_AA,
         )
 
-    # JSON key 用字符串，排序保存
+    # JSON key 用字符串，排序保存，便于稳定 diff，也符合 JSON 对象 key 的通用约定。
     out_map = {
         str(k): id_map[k]
         for k in sorted(id_map.keys())

@@ -17,6 +17,12 @@ from .robot import RTDERobotClient, RobotConfig, prepare_robot_program
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
+    """
+    读取实时采集配置，并做最小结构校验。
+
+    这里不做过重的参数合法性检查，原因是 robot/camera/calibration 的细节会分别由
+    RobotConfig、CameraSpec 和 calib.py 继续校验；本函数只保证后续流程需要的顶层字段存在。
+    """
     config_path = Path(path)
     data = json.loads(config_path.read_text(encoding="utf-8"))
     if "robot" not in data:
@@ -29,10 +35,22 @@ def load_config(path: str | Path) -> dict[str, Any]:
 
 
 def run_collection_workflow(args: argparse.Namespace) -> int:
+    """
+    实时采集 + 自动标定的主编排函数。
+
+    整体流程是：
+    1. 从 JSON 配置和命令行覆盖项解析机器人、相机、采样和标定参数。
+    2. dry-run 时只打印将要连接的设备和最终 calib.py 命令，不碰机器人/相机。
+    3. 真正运行时先按配置准备 URP，再同时打开 RTDE 和双 RealSense。
+    4. 按 timed/manual 两种模式保存若干组 `TCP + 双相机图像`。
+    5. 样本数量满足要求后，调用 calib.py 计算手眼标定结果。
+    """
     project_root = Path(args.project_root).resolve()
     config_path = Path(args.config).resolve()
     config = load_config(config_path)
 
+    # 配置文件保持面向用户的 JSON 格式；这里转换成后续模块使用的 dataclass，
+    # 使机器人连接、相机启动和路径处理都集中在各自模块里。
     robot_cfg = RobotConfig.from_dict(config["robot"])
     camera_specs = [CameraSpec.from_dict(item) for item in config["cameras"]]
     sampling_cfg = dict(config.get("sampling", {}))
@@ -42,26 +60,37 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
         preview_scale=getattr(args, "preview_scale", None),
     )
     mode = args.mode or str(sampling_cfg.get("mode", "timed"))
+
+    # dataset_dir 保存原始采集样本；output_dir 保存 calib.py 的结果。
+    # 命令行参数优先级高于配置文件，便于同一份配置临时跑不同输出目录。
     dataset_dir = _resolve_path(project_root, args.dataset_dir or config.get("dataset_dir", "data/live_capture"))
     output_dir = _resolve_path(project_root, args.output_dir or config["calibration"].get("output_dir", "outputs/live_calibration"))
+
+    # 默认 live_calibration 目录会自动追加时间戳，避免重复采集时覆盖上一轮标定结果。
     output_dir = _timestamp_live_calibration_dir(output_dir)
 
+    # 把最终采用的路径和预览配置写回 config。后续既会保存 capture_session_config.json，
+    # 也会用这份 config 构造 calib.py 命令，所以这里是“本轮真实配置”的统一入口。
     config["dataset_dir"] = str(_relative_or_absolute(project_root, dataset_dir))
     config["calibration"]["output_dir"] = str(_relative_or_absolute(project_root, output_dir))
     config["preview"] = preview_cfg
 
     if args.dry_run:
+        # dry-run 必须在连接硬件前返回，用于实机前检查 IP、序列号、输出路径和标定命令。
         _print_dry_run(project_root, config_path, robot_cfg, camera_specs, dataset_dir, output_dir, mode, config)
         return 0
 
+    # writer 负责把每组样本落盘为 calib.py 已支持的 sample_xxx/pose.json 结构。
     writer = CalibrationDatasetWriter(dataset_dir)
     writer.write_session_config(config)
 
     if not args.skip_robot_program:
+        # 只负责 Dashboard 加载/启动 URP；真正的 TCP 读取仍由 RTDE 完成。
         prepare_robot_program(robot_cfg)
     else:
         print("[robot] 已跳过 Dashboard 加载/启动 URP，仅使用 RTDE 读取 TCP。")
 
+    # 预览只影响人眼观察和按键输入，不改变保存图像的原始分辨率。
     preview = OpenCVCameraPreview(
         enabled=bool(preview_cfg.get("enabled", True)),
         scale=float(preview_cfg.get("scale", 0.5)),
@@ -76,8 +105,10 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
 
     captured = 0
     try:
+        # 用一个 with 同时管理 RTDE 和 RealSense 生命周期，确保异常或 Ctrl+C 后能释放资源。
         with RTDERobotClient(robot_cfg.host) as robot, RealSenseCaptureSystem(camera_specs) as cameras:
             if bool(config.get("refresh_intrinsics_from_device", True)):
+                # 使用 RealSense 当前 active profile 写内参，避免配置里的内参与实际分辨率/FPS 不一致。
                 _save_live_intrinsics(project_root, camera_specs, cameras)
 
             if mode == "manual":
@@ -95,17 +126,20 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
     print(f"[collect] 本次新增 {captured} 个样本，数据集当前共有 {total_samples} 个 pose.json。")
 
     if args.skip_calibration:
+        # 只采集不计算，常用于先人工检查图像质量或后续手动调参重跑 calib.py。
         print("[calib] 已按参数跳过自动标定。")
         return 0
 
     min_samples = int(config["calibration"].get("min_samples", 5))
     if total_samples < min_samples:
+        # OpenCV 手眼标定至少需要多组姿态约束；样本太少时直接跳过，避免输出误导性结果。
         print(f"[calib] 样本数 {total_samples} 少于 {min_samples}，跳过自动标定。")
         return 0
 
     command = build_calibration_command(project_root, config, dataset_dir, output_dir)
     print("[calib] 开始自动标定:")
     print(" ".join(str(part) for part in command))
+    # check=True 让 calib.py 失败时把错误传回采集入口，避免用户误以为整轮流程成功。
     subprocess.run(command, cwd=str(project_root), check=True)
     return 0
 
@@ -116,7 +150,15 @@ def build_calibration_command(
     dataset_dir: Path,
     output_dir: Path,
 ) -> list[str]:
+    """
+    把配置文件中的 calibration 字段转换成 calib.py 命令行。
+
+    设计上让实时采集和手动运行 calib.py 共用同一个入口参数集合；新增标定参数时，
+    只要写入配置的 calibration 字段，一般就能自动透传给 calib.py。
+    """
     calib_cfg = dict(config["calibration"])
+
+    # dataset/output 以运行时解析后的路径为准，覆盖配置文件原值。
     calib_cfg["dataset_dir"] = str(_relative_or_absolute(project_root, dataset_dir))
     calib_cfg["output_dir"] = str(_relative_or_absolute(project_root, output_dir))
 
@@ -131,6 +173,7 @@ def build_calibration_command(
             continue
         command.append(f"--{key}")
         if isinstance(value, bool):
+            # calib.py 使用 str2bool 解析 true/false；不要把 Python True/False 直接传给命令行。
             command.append("true" if value else "false")
         else:
             command.append(str(value))
@@ -145,6 +188,12 @@ def _manual_capture_loop(
     sampling_cfg: dict[str, Any],
     preview: OpenCVCameraPreview,
 ) -> int:
+    """
+    手动采集循环。
+
+    有预览时，每轮先刷新一次相机画面，再读取窗口或终端按键；无预览时只等待终端按键。
+    只有收到 capture_key 才保存样本，收到 stop_key 则结束本轮采集。
+    """
     capture_key = str(sampling_cfg.get("manual_capture_key", "c")).lower()
     stop_key = str(sampling_cfg.get("manual_stop_key", "q")).lower()
     max_samples = sampling_cfg.get("max_samples")
@@ -154,6 +203,7 @@ def _manual_capture_loop(
     captured = 0
     while max_samples is None or captured < max_samples:
         if preview.enabled:
+            # 手动模式也持续拉取相机帧用于预览，便于确认两台相机都能看到标定板。
             frames = cameras.capture_all()
             command = _command_from_key(preview.show(frames), capture_key, stop_key)
             command = command or _poll_manual_command(capture_key, stop_key)
@@ -163,6 +213,7 @@ def _manual_capture_loop(
             command = _wait_manual_command(capture_key, stop_key)
         if command == "stop":
             break
+        # 真正保存时会重新读取 TCP 和双相机图像，保证落盘样本对应按键触发时刻。
         sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview)
         captured += 1
         print(f"[collect] 已保存样本 {captured}: {sample_dir}")
@@ -177,6 +228,12 @@ def _timed_capture_loop(
     sampling_cfg: dict[str, Any],
     preview: OpenCVCameraPreview,
 ) -> int:
+    """
+    定时采集循环。
+
+    每轮保存一次完整样本，然后在剩余间隔内继续刷新预览；这样既能按固定频率采样，
+    又能允许用户在等待期间按 stop_key 提前结束。
+    """
     interval_s = float(sampling_cfg.get("interval_s", 2.0))
     max_samples = sampling_cfg.get("max_samples", 35)
     max_samples = int(max_samples) if max_samples is not None else None
@@ -191,6 +248,7 @@ def _timed_capture_loop(
         print(f"[collect] 已保存样本 {captured}: {sample_dir}")
         if max_samples is not None and captured >= max_samples:
             break
+        # 采样本身会消耗时间，只等待剩余时间，尽量保持实际采样周期接近 interval_s。
         sleep_s = max(0.0, interval_s - (time.monotonic() - started))
         if _wait_interval(sleep_s, cameras, preview, stop_key):
             break
@@ -204,6 +262,13 @@ def _capture_once(
     robot_cfg: RobotConfig,
     preview: OpenCVCameraPreview,
 ) -> Path:
+    """
+    保存一组用于标定的同步样本。
+
+    当前同步策略是“顺序近似同步”：先读机器人 TCP 和关节角，再抓取双相机当前帧，
+    最后一起写入同一个 sample_xxx 目录。采样时机器人必须静止，否则 TCP 和图像
+    可能不是同一真实姿态。
+    """
     tcp_pose = robot.get_tcp_pose()
     joint_angles = robot.get_joint_angles()
     frames = cameras.capture_all()
@@ -217,6 +282,7 @@ def _capture_once(
 
 
 def _wait_manual_command(capture_key: str, stop_key: str) -> str:
+    """无预览或终端输入场景下等待手动按键。Windows 用 msvcrt 单键读取，其他平台退回 input。"""
     try:
         import msvcrt
 
@@ -239,6 +305,11 @@ def _wait_interval(
     preview: OpenCVCameraPreview,
     stop_key: str,
 ) -> bool:
+    """
+    定时模式下等待下一次采样，并在等待期间处理预览和停止按键。
+
+    返回 True 表示用户请求提前结束；False 表示正常等到下一次采样时间。
+    """
     if duration_s <= 0:
         return False
     if not preview.enabled:
@@ -256,6 +327,7 @@ def _wait_interval(
 
 
 def _poll_manual_command(capture_key: str | None, stop_key: str) -> str | None:
+    """非阻塞读取 Windows 终端按键；没有按键时立即返回 None，避免卡住预览刷新。"""
     try:
         import msvcrt
     except ImportError:
@@ -270,6 +342,7 @@ def _poll_manual_command(capture_key: str | None, stop_key: str) -> str | None:
 
 
 def _command_from_key(key: str | None, capture_key: str | None, stop_key: str) -> str | None:
+    """把原始按键统一翻译成 capture/stop 命令，便于预览窗口和终端共用同一套逻辑。"""
     if not key:
         return None
     key = key.lower()
@@ -285,6 +358,12 @@ def _save_live_intrinsics(
     camera_specs: list[CameraSpec],
     cameras: RealSenseCaptureSystem,
 ) -> None:
+    """
+    保存当前 RealSense active color profile 的内参。
+
+    标定用的 K/dist 必须和实际采集图像的分辨率、流配置一致。启动相机后从设备读取
+    active profile 并覆盖配置中的内参文件，可以降低“内参文件和本轮采集不匹配”的风险。
+    """
     live_intrinsics = cameras.color_intrinsics()
     for spec in camera_specs:
         if not spec.intrinsics_path:
@@ -317,6 +396,7 @@ def _print_dry_run(
     mode: str,
     config: dict[str, Any],
 ) -> None:
+    """打印本轮真实会使用的硬件配置、输出路径和 calib.py 命令，用于实机前核对。"""
     print(f"[dry-run] project_root: {project_root}")
     print(f"[dry-run] config: {config_path}")
     print(f"[dry-run] robot: {robot_cfg.host}, program={robot_cfg.program}")
@@ -343,6 +423,7 @@ def _print_dry_run(
 
 
 def _resolve_path(project_root: Path, value: str | Path) -> Path:
+    """把配置中的相对路径解释为相对项目根目录，绝对路径则保持不变。"""
     path = Path(value)
     if path.is_absolute():
         return path
@@ -358,6 +439,7 @@ def _timestamp_live_calibration_dir(path: Path, timestamp: str | None = None) ->
 
 
 def _relative_or_absolute(project_root: Path, path: Path) -> str:
+    """能表示为项目内相对路径时就用相对路径，方便保存到配置和命令中跨机器阅读。"""
     try:
         return str(path.resolve().relative_to(project_root.resolve()))
     except ValueError:
