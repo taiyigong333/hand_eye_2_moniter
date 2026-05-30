@@ -58,37 +58,99 @@ def parse_corners(s):
     return np.array(pts, dtype=np.float32)
 
 
-def pick_corners_gui(img):
+def compute_display_scale(
+    img_shape,
+    display_scale=None,
+    max_display_width=1600,
+    max_display_height=900,
+):
+    """计算 GUI 显示缩放比例；返回值只影响点击窗口，不改变原始像素坐标。"""
+    height, width = img_shape[:2]
+    if display_scale is not None:
+        if display_scale <= 0:
+            raise ValueError("--display_scale must be positive")
+        return float(display_scale)
+
+    scale = 1.0
+    if max_display_width is not None and max_display_width > 0:
+        scale = min(scale, float(max_display_width) / float(width))
+    if max_display_height is not None and max_display_height > 0:
+        scale = min(scale, float(max_display_height) / float(height))
+    return scale
+
+
+def resize_for_display(img, scale):
+    """按显示比例缩放图片；scale=1 时直接复用原图。"""
+    if abs(scale - 1.0) < 1e-9:
+        return img.copy()
+    height, width = img.shape[:2]
+    display_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(img, display_size, interpolation=interpolation)
+
+
+def pick_corners_gui(
+    img,
+    display_scale=None,
+    max_display_width=1600,
+    max_display_height=900,
+):
     """
     用 OpenCV 窗口交互式点击棋盘四角。
 
-    这个函数只负责获取四个像素点；后续透视变换仍由 main() 统一计算。无桌面环境
-    或需要可复现命令时，推荐直接使用 --corners。
+    这个函数只负责获取四个原图像素点；后续透视变换仍由 main() 统一计算。无桌面
+    环境或需要可复现命令时，推荐直接使用 --corners。
     """
     points = []
-    vis = img.copy()
+    scale = compute_display_scale(
+        img.shape,
+        display_scale=display_scale,
+        max_display_width=max_display_width,
+        max_display_height=max_display_height,
+    )
 
-    def on_mouse(event, x, y, flags, param):
-        nonlocal vis
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # 每次点击后立刻画点和序号，降低四角顺序点错的概率。
-            points.append([x, y])
-            cv2.circle(vis, (x, y), 6, (0, 0, 255), -1)
+    def redraw():
+        vis = resize_for_display(img, scale)
+        radius = max(3, int(round(6 * scale)))
+        text_scale = max(0.5, 0.8 * scale)
+        thickness = max(1, int(round(2 * scale)))
+        for index, (orig_x, orig_y) in enumerate(points, start=1):
+            x = int(round(orig_x * scale))
+            y = int(round(orig_y * scale))
+            cv2.circle(vis, (x, y), radius, (0, 0, 255), -1)
             cv2.putText(
                 vis,
-                str(len(points)),
+                str(index),
                 (x + 8, y - 8),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                text_scale,
                 (0, 0, 255),
-                2,
+                thickness,
                 cv2.LINE_AA,
             )
-            cv2.imshow("click corners", vis)
+        return vis
+
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if len(points) >= 4:
+                return
+            # 窗口可能缩小显示，但真正保存的是原图坐标，避免后续单应变换用错尺度。
+            orig_x = float(np.clip(x / scale, 0, img.shape[1] - 1))
+            orig_y = float(np.clip(y / scale, 0, img.shape[0] - 1))
+            points.append([orig_x, orig_y])
+            print(f"[INFO] corner {len(points)}: {orig_x:.1f},{orig_y:.1f}")
+            cv2.imshow("click corners", redraw())
 
     print("[INFO] 请依次点击棋盘格有效区域四角：左上、右上、右下、左下")
     print("[INFO] 注意：点棋盘 20x15 格子的外边界，不要点纸张外边缘")
-    cv2.imshow("click corners", vis)
+    print(
+        "[INFO] GUI显示缩放比例: "
+        f"{scale:.3f}，原图尺寸 {img.shape[1]}x{img.shape[0]}"
+    )
+    cv2.imshow("click corners", redraw())
     cv2.setMouseCallback("click corners", on_mouse)
 
     while True:
@@ -180,14 +242,14 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="一张能看清整块或大部分标定板的图片")
-    parser.add_argument("--out", default="assets/boards/aruco_id_map.json")
-    parser.add_argument("--vis", default="assets/boards/aruco_id_map_vis.jpg")
+    parser.add_argument("--out", default="assets/boards/aruco_id_map_new.json")
+    parser.add_argument("--vis", default="assets/boards/aruco_id_map_new.jpg")
     parser.add_argument("--aruco_dict", default="DICT_6X6_250")
     parser.add_argument("--grid_cols", type=int, default=20)
     parser.add_argument("--grid_rows", type=int, default=15)
-    parser.add_argument("--tag_size", type=float, default=0.016)
+    parser.add_argument("--tag_size", type=float, default=0.015)
     parser.add_argument("--cell_size", type=float, default=0.019)
-    parser.add_argument("--top_left_is_tag", type=str2bool, default=False)
+    parser.add_argument("--top_left_is_tag", type=str2bool, default=True)
     parser.add_argument(
         "--corners",
         type=str,
@@ -197,8 +259,26 @@ def main():
     parser.add_argument(
         "--max_cell_dist",
         type=float,
-        default=0.45,
+        default=0.55,
         help="marker 中心到最近合法格子中心的最大距离，单位是 cell",
+    )
+    parser.add_argument(
+        "--display_scale",
+        type=float,
+        default=None,
+        help="GUI 点击窗口显示缩放比例；不传时按最大显示宽高自动缩小。",
+    )
+    parser.add_argument(
+        "--max_display_width",
+        type=int,
+        default=1600,
+        help="GUI 自动缩放时允许的最大显示宽度，单位像素；设为 0 表示不限制。",
+    )
+    parser.add_argument(
+        "--max_display_height",
+        type=int,
+        default=900,
+        help="GUI 自动缩放时允许的最大显示高度，单位像素；设为 0 表示不限制。",
     )
     parser.add_argument(
         "--merge",
@@ -220,7 +300,12 @@ def main():
         src = parse_corners(args.corners)
     else:
         # 有桌面显示时，可人工点击四角。
-        src = pick_corners_gui(img)
+        src = pick_corners_gui(
+            img,
+            display_scale=args.display_scale,
+            max_display_width=args.max_display_width,
+            max_display_height=args.max_display_height,
+        )
 
     # 目标坐标用棋盘 cell 单位。整块有效棋盘左上角是 (0,0)，右下角是
     # (grid_cols, grid_rows)，这样每个格子的行列可直接由 cell 坐标解释。
