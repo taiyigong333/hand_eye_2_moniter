@@ -25,7 +25,100 @@ T_tcp_cam
 
 当前 `../reproduction/graspnet-baseline-in-ur7e/outputs/last_grasp.json` 中记录的 `camera_serial` 是 `254522072098`，即固定相机。它可以用来说明 GraspNet 输出字段格式，但不能直接与本文的 `T_tcp_cam` 混合生成真实腕部相机抓取目标。
 
-## 2. 坐标系和矩阵定义
+## 2. 当前是否可以直接使用 GraspNet
+
+结论：如果目标是使用本文这条“腕部相机 + 夹爪 TCP 眼在手上结果”的链路，现在还不能直接用现有 `run_windows_pick_cycle.py` 让机器人抓取。
+
+原因不是 GraspNet 本身不能推理，而是现有抓取编排还没有接入这条动态手眼链：
+
+| 项目 | 当前状态 | 影响 |
+| --- | --- | --- |
+| GraspNet HTTP 推理 | 已有 `capture_and_infer.py` / `run_windows_pick_cycle.py` 调用链 | 可以请求 GraspNet，但输出仍在输入相机坐标系 |
+| 当前单相机抓取配置 | `configs/ur7e_graspnet.local.json` 的 `camera.serial=254522072098` | 当前指向外部固定相机，不是腕部相机 |
+| 当前外参配置 | `calibration.T_base_cam` 是固定相机到 base 的静态矩阵 | 不会使用 `outputs/eye_in_hand_calibration_夹爪TCP` 的 `T_tcp_cam` |
+| 当前目标计算代码 | `pick_controller.py` 直接读取静态 `calibration.T_base_cam` | 没有运行时计算 `T_base_cam_now = T_base_tcp_now @ T_tcp_cam` |
+| 当前 RTDE 读数 | 代码能通过 `read_current_tcp()` 读取当前 TCP | 还没有把该读数用于腕部相机动态外参 |
+| TCP 偏置 | 已有 `tcp_translation_offset_m` 字段 | 需要重新确认它是否适用于当前夹爪 TCP 和当前 GraspNet 抓取中心 |
+
+因此当前可继续沿用或单独验证的是：
+
+- 固定相机旧链路：继续用 `serial=254522072098` 和静态 `calibration.T_base_cam`，但仍要以固定相机外参、TCP 偏置、URP 和安全阈值的实机验证为准。
+- 腕部相机预览/推理：可以用双相机预览或单独配置腕部相机请求 GraspNet，验证它能返回 `best_grasp`。
+
+当前还不能直接使用的是：
+
+- 把 `outputs/eye_in_hand_calibration_夹爪TCP/T_ee_cam_end` 直接填进 `calibration.T_base_cam` 后抓取。这个矩阵是 `T_tcp_cam`，不是 `T_base_cam`。
+- 把固定相机的 `last_grasp.json` 结果乘以 `T_tcp_cam` 后生成腕部抓取目标。相机坐标系不一致。
+
+## 3. 接入腕部相机 GraspNet 还差什么
+
+最小缺口如下：
+
+1. 新增或修改抓取配置，让 GraspNet 输入相机切到腕部相机：
+
+```json
+{
+  "camera": {
+    "serial": "419122270341"
+  }
+}
+```
+
+同时确认腕部相机能提供 GraspNet 需要的 RGB-D 输入。手眼标定只用了 RGB 图像，但 GraspNet 抓取推理需要深度图、深度和彩色对齐、相机内参和 `factor_depth`。
+
+2. 在抓取代码中读取夹爪 TCP 标定结果：
+
+```text
+T_tcp_cam = outputs/eye_in_hand_calibration_夹爪TCP/calibration_result.json
+  /T_ee_cam_end/matrix_4x4
+```
+
+注意这个字段名虽然叫 `T_ee_cam_end`，但本轮采集时 RTDE 保存的是夹爪 TCP，所以在线抓取时应按 `T_tcp_cam` 解释。
+
+3. 在每次 GraspNet 拍照对应的机器人稳定姿态下读取当前 RTDE 夹爪 TCP，并把 6D 位姿转成矩阵：
+
+```text
+tcp_now = rtde_receive.getActualTCPPose()  # [x, y, z, rx, ry, rz]
+T_base_tcp_now = pose_to_matrix(tcp_now)
+```
+
+该读数必须和 GraspNet 使用的 RGB-D 帧尽量同步。机器人如果仍在运动，动态外参会错。
+
+4. 用当前 TCP 动态生成腕部相机到 base 的外参：
+
+```text
+T_base_cam_now = T_base_tcp_now @ T_tcp_cam
+```
+
+然后把现有代码中的静态：
+
+```text
+T_base_cam = config["calibration"]["T_base_cam"]
+```
+
+替换为本次动态计算的 `T_base_cam_now`。
+
+5. 重新确认夹爪 TCP 目标偏置：
+
+```text
+tcp_translation_offset_m
+target_base_offset_m
+tcp_rotation_mode
+fixed_tcp_rotvec 或 tcp_rotation_offset
+```
+
+`tcp_translation_offset_m` 表示从 GraspNet 抓取中心到 UR TCP 原点的向量，按最终 TCP 坐标系表达。即使 `T_tcp_cam` 已经是腕部相机到夹爪 TCP 的外参，这个偏置仍可能需要，因为 GraspNet 的 `translation` 是抓取中心，不一定是 UR TCP 原点。
+
+6. 增加离线/半实机验证：
+
+- 先只运行腕部相机 `capture_and_infer.py`，确认 `best_grasp` 的 `camera_serial` 是 `419122270341`。
+- 打印 `T_base_tcp_now`、`T_base_cam_now`、`grasp_center_base`、`tcp_goal`。
+- 检查 `tcp_goal` 相对当前 TCP 的 `Δpos` 和 SO(3) `Δrot`，不要直接相减 Rodrigues 向量。
+- 首次实机只走预抓取点，低速、张开夹爪，不闭合。
+
+满足以上 6 项后，才可以认为本文这条腕部相机 GraspNet 链路具备实机试抓条件。
+
+## 4. 坐标系和矩阵定义
 
 本文继续使用项目内统一约定：
 
@@ -70,7 +163,7 @@ T_A_B = [
 ]
 ```
 
-## 3. 标定文件中已有的实际数值
+## 5. 标定文件中已有的实际数值
 
 `outputs/eye_in_hand_calibration_夹爪TCP/calibration_result.json` 的关键信息：
 
@@ -114,7 +207,7 @@ p_tcp = R_tcp_cam @ p_cam + t_tcp_cam
 
 `calibration_result.json` 里还有 `T_base_board`，它是标定板到机器人 base 的位姿，用于标定质量检查和当时的标定链路闭环；在线 GraspNet 抓取时不直接用它生成 TCP 目标。
 
-## 4. GraspNet-baseline 输出怎么解释
+## 6. GraspNet-baseline 输出怎么解释
 
 `graspnet_ur7e/transforms.py` 里的 `parse_grasp_array()` 把 GraspNet 的 17 维数组解释为：
 
@@ -159,7 +252,7 @@ R_cam_grasp =
 
 再次强调：这组 `last_grasp.json` 的元数据里是固定相机序列号 `254522072098`，这里只用它展示字段含义。真实使用本文链路时，应把同样格式的 GraspNet 输出换成腕部相机输出。
 
-## 5. 第一步：从相机坐标系推到夹爪 TCP 坐标系
+## 7. 第一步：从相机坐标系推到夹爪 TCP 坐标系
 
 如果 GraspNet 输出来自腕部相机，则先用标定结果把抓取中心从相机坐标系变到当前夹爪 TCP 坐标系：
 
@@ -202,7 +295,7 @@ tcp 坐标系下 z =  0.4719 m
 
 注意这还不是机器人 base 下的目标点位，因为此时还没有乘上当前 RTDE 读取的 `T_base_tcp_now`。
 
-## 6. 第二步：从当前夹爪 TCP 坐标系推到机器人 base
+## 8. 第二步：从当前夹爪 TCP 坐标系推到机器人 base
 
 运行时 RTDE 会读取当前夹爪 TCP 在 `base` 下的 6D 位姿：
 
@@ -252,7 +345,7 @@ R_base_grasp = R_base_tcp_now @ R_tcp_grasp
 
 到这里得到的是“GraspNet 抓取中心在 base 下的位置”和“GraspNet 抓取坐标系在 base 下的姿态”。
 
-## 7. 第三步：由抓取中心推到夹爪 TCP 目标
+## 9. 第三步：由抓取中心推到夹爪 TCP 目标
 
 机器人最终执行的是夹爪 TCP 目标，不是 GraspNet 抓取中心。因此还要明确一个偏移：
 
@@ -319,7 +412,7 @@ tcp_goal = [
 
 这就是 UR 控制侧常用的 `[x, y, z, rx, ry, rz]`。
 
-## 8. 完整推理链
+## 10. 完整推理链
 
 把上述步骤合起来，腕部相机 GraspNet 输出到夹爪 TCP 目标的完整链路是：
 
@@ -352,7 +445,7 @@ t_base_tcp_goal = t_base_grasp
 
 这表示“把夹爪 TCP 原点直接移动到 GraspNet 抓取中心”。只有当 UR TCP 原点确实定义为夹爪实际抓取中心时，这个简化才成立。
 
-## 9. 预抓取点位
+## 11. 预抓取点位
 
 GraspNet-baseline 的抓取流程通常还会生成预抓取点 `pregrasp`。当前代码中 `make_pregrasp_translation()` 使用 GraspNet 抓取姿态的某一列作为接近方向：
 
@@ -389,7 +482,7 @@ tcp_pregrasp = [t_base_tcp_pregrasp, rotvec(R_base_tcp_goal)]
 
 注意：预抓取方向使用 `R_base_grasp`，而不是已经叠加 TCP 姿态修正后的 `R_base_tcp_goal`。这是当前 `pick_controller.py` 的实现约定，目的是保持 GraspNet 的接近方向不被 TCP 姿态补偿破坏。
 
-## 10. 和当前 GraspNet-baseline 代码的对应关系
+## 12. 和当前 GraspNet-baseline 代码的对应关系
 
 固定相机抓取代码原本使用：
 
@@ -423,7 +516,7 @@ grasp_tcp = pose_from_translation_rotation(grasp_tcp_t_base, tcp_R_base)
 - 固定相机场景：`T_base_cam` 是固定外参，来自 `T_base_cam_fixed`。
 - 腕部相机场景：`T_base_cam_now = T_base_tcp_now @ T_tcp_cam`，每次抓取都要用当前 RTDE 重新算。
 
-## 11. 为什么本轮不需要法兰盘到 TCP 的额外变换
+## 13. 为什么本轮不需要法兰盘到 TCP 的额外变换
 
 因为 `outputs/eye_in_hand_calibration_夹爪TCP/` 是用“夹爪 TCP 在 base 下的 RTDE 读数”计算出来的，所以标定结果已经把腕部相机外参绑定到了夹爪 TCP 坐标系：
 
@@ -447,7 +540,7 @@ o_tcp = GraspNet 抓取中心 -> UR TCP 原点
 
 它不是法兰盘到 TCP 的变换，而是“视觉抓取中心”和“机器人控制 TCP 原点”之间的物理差异。只有当这两个点完全一致时，才可以设为零。
 
-## 12. 最小实现伪代码
+## 14. 最小实现伪代码
 
 ```python
 import numpy as np
@@ -490,7 +583,7 @@ def graspnet_to_tcp_goal(
 
 这里 `current_tcp_pose` 必须来自 GraspNet 拍摄同一时刻或足够接近同一稳定姿态的 RTDE 读数。如果机器人在拍照和读 TCP 之间发生运动，`T_base_cam_now` 就会错，最终抓取点位也会错。
 
-## 13. 实机检查顺序
+## 15. 实机检查顺序
 
 1. 确认 GraspNet 输入相机是腕部相机 `serial=419122270341`。
 2. 读取 `outputs/eye_in_hand_calibration_夹爪TCP/calibration_result.json/T_ee_cam_end/matrix_4x4`，按 `T_tcp_cam` 使用。
@@ -502,7 +595,7 @@ def graspnet_to_tcp_goal(
 6. 先只输出 `tcp_goal`，不要立即执行；检查目标相对当前 TCP 的位置跳变量和旋转跳变量。
 7. 低速、张开夹爪、空跑到预抓取点，确认运动方向正确后再执行闭合抓取。
 
-## 14. 最容易出错的地方
+## 16. 最容易出错的地方
 
 | 错误 | 后果 |
 | --- | --- |
