@@ -157,7 +157,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --config configs\live_collection.example.json
 ```
 
-该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口、保存双相机 RGB 样本，并在采集结束后自动调用 `calib.py`。详细说明见 [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)，采集前参数清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)。
+该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口，并在每次拍照前按配置发送 Dashboard `pause`、等待 0.5 秒、拍照后发送 `play` 继续示教器程序。采集结束后会自动调用 `calib.py`。详细说明见 [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)，采集前参数清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)。
 
 ### 常用命令
 
@@ -192,7 +192,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --skip_calibration
 ```
 
-如果已经在示教器上手动加载并启动配置文件中的 URP 程序，可以跳过 Dashboard 控制，只读取 RTDE 和相机：
+如果已经在示教器上手动加载并启动配置文件中的 URP 程序，可以跳过 Dashboard 加载/启动；采样前暂停同步仍由 `robot.pause_before_capture` 控制：
 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
@@ -302,6 +302,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 
 - `robot.host`：UR7e 的 IP 地址。
 - `robot.program`：示教器中已经保存的 URP 文件名，当前示例配置为 `autoHandEye2.urp`。
+- `robot.pause_before_capture` / `robot.capture_settle_s` / `robot.resume_after_capture`：每次拍照前发送 `pause`，等待机械臂稳定，拍照后发送 `play`。
 - `cameras[].serial`：RealSense 序列号，建议实机前确认。
 - `cameras[].color_width` / `color_height` / `fps`：RGB 流参数。
 - `cameras[].intrinsics_path`：相机启动后写入 active profile 内参的位置，也是后续标定使用的内参路径。
@@ -322,6 +323,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 - UR7e 和 PC 网络互通，PC 能访问 `robot.host`。
 - UR 控制柜已启用 Dashboard server 和 RTDE。
 - `configs/live_collection.example.json` 中的 `robot.program` 已经保存在示教器中。
+- 如启用 `robot.pause_before_capture`，确认示教器程序允许运行中被 Dashboard `pause` 暂停，并可用 `play` 继续。
 - 两台 RealSense 没有被 RealSense Viewer 或其他程序占用。
 - `configs/live_collection.example.json` 中的 RealSense 序列号、分辨率和 FPS 与实际设备一致。
 - 标定板在每个有效采样姿态中都能同时被两台相机看到。

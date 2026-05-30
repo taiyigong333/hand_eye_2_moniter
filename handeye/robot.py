@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,9 @@ class RobotConfig:
     load_program: bool = True
     play_after_load: bool = True
     stop_before_load: bool = False
+    pause_before_capture: bool = False
+    capture_settle_s: float = 0.5
+    resume_after_capture: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RobotConfig":
@@ -23,6 +27,9 @@ class RobotConfig:
             load_program=bool(data.get("load_program", True)),
             play_after_load=bool(data.get("play_after_load", True)),
             stop_before_load=bool(data.get("stop_before_load", False)),
+            pause_before_capture=bool(data.get("pause_before_capture", False)),
+            capture_settle_s=float(data.get("capture_settle_s", 0.5)),
+            resume_after_capture=bool(data.get("resume_after_capture", True)),
         )
 
 
@@ -102,11 +109,42 @@ class URDashboardClient:
     def stop(self) -> str:
         return self.command("stop")
 
+    def pause(self) -> str:
+        return self.command("pause")
+
     def load_program(self, program: str) -> str:
         return self.command(f"load {program}")
 
     def play(self) -> str:
         return self.command("play")
+
+
+class URProgramCaptureSync:
+    """拍照前后通过 Dashboard 暂停/继续 URP，避免运动中采样。"""
+
+    def __init__(self, config: RobotConfig):
+        self.config = config
+        self.dashboard = URDashboardClient(config.host, config.dashboard_port)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.config.pause_before_capture)
+
+    def pause_before_capture(self) -> None:
+        if not self.enabled:
+            return
+        # 使用 pause/play 而不是 stop/play，避免每次采样后从头重启示教器程序。
+        self.dashboard.pause()
+        settle_s = max(0.0, float(self.config.capture_settle_s))
+        print(f"[robot] 已发送采样暂停信号，等待 {settle_s:.3f}s 后拍照。")
+        if settle_s > 0:
+            time.sleep(settle_s)
+
+    def resume_after_capture(self) -> None:
+        if not self.enabled or not self.config.resume_after_capture:
+            return
+        self.dashboard.play()
+        print("[robot] 拍照完成，已发送继续运行信号。")
 
 
 def prepare_robot_program(config: RobotConfig) -> None:

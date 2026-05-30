@@ -13,7 +13,7 @@ from .dataset import CalibrationDatasetWriter, count_pose_json
 from .intrinsics import save_calib_intrinsics
 from .preview import OpenCVCameraPreview, preview_config_from_workflow_config
 from .realsense import CameraSpec, RealSenseCaptureSystem
-from .robot import RTDERobotClient, RobotConfig, prepare_robot_program
+from .robot import RTDERobotClient, RobotConfig, URProgramCaptureSync, prepare_robot_program
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -42,7 +42,7 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
     1. 从 JSON 配置和命令行覆盖项解析机器人、相机、采样和标定参数。
     2. dry-run 时只打印将要连接的设备和最终 calib.py 命令，不碰机器人/相机。
     3. 真正运行时先按配置准备 URP，再同时打开 RTDE 和双 RealSense。
-    4. 按 timed/manual 两种模式保存若干组 `TCP + 双相机图像`。
+    4. 每次拍照前可按配置暂停 URP、等待机械臂稳定，再保存 `TCP + 双相机图像`。
     5. 样本数量满足要求后，调用 calib.py 计算手眼标定结果。
     """
     project_root = Path(args.project_root).resolve()
@@ -88,7 +88,14 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
         # 只负责 Dashboard 加载/启动 URP；真正的 TCP 读取仍由 RTDE 完成。
         prepare_robot_program(robot_cfg)
     else:
-        print("[robot] 已跳过 Dashboard 加载/启动 URP，仅使用 RTDE 读取 TCP。")
+        print("[robot] 已跳过 Dashboard 加载/启动 URP。")
+
+    capture_sync = URProgramCaptureSync(robot_cfg) if robot_cfg.pause_before_capture else None
+    if capture_sync is not None:
+        print(
+            "[robot] 已启用采样前暂停同步：每次拍照前发送 Dashboard pause，"
+            f"等待 {robot_cfg.capture_settle_s:.3f}s，拍照后发送 play。"
+        )
 
     # 预览只影响人眼观察和按键输入，不改变保存图像的原始分辨率。
     preview = OpenCVCameraPreview(
@@ -112,9 +119,9 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
                 _save_live_intrinsics(project_root, camera_specs, cameras)
 
             if mode == "manual":
-                captured = _manual_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview)
+                captured = _manual_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview, capture_sync)
             elif mode == "timed":
-                captured = _timed_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview)
+                captured = _timed_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview, capture_sync)
             else:
                 raise ValueError(f"不支持的采样模式: {mode}")
     except KeyboardInterrupt:
@@ -187,6 +194,7 @@ def _manual_capture_loop(
     robot_cfg: RobotConfig,
     sampling_cfg: dict[str, Any],
     preview: OpenCVCameraPreview,
+    capture_sync: URProgramCaptureSync | None,
 ) -> int:
     """
     手动采集循环。
@@ -214,7 +222,7 @@ def _manual_capture_loop(
         if command == "stop":
             break
         # 真正保存时会重新读取 TCP 和双相机图像，保证落盘样本对应按键触发时刻。
-        sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview)
+        sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview, capture_sync)
         captured += 1
         print(f"[collect] 已保存样本 {captured}: {sample_dir}")
     return captured
@@ -227,6 +235,7 @@ def _timed_capture_loop(
     robot_cfg: RobotConfig,
     sampling_cfg: dict[str, Any],
     preview: OpenCVCameraPreview,
+    capture_sync: URProgramCaptureSync | None,
 ) -> int:
     """
     定时采集循环。
@@ -243,7 +252,7 @@ def _timed_capture_loop(
     captured = 0
     while max_samples is None or captured < max_samples:
         started = time.monotonic()
-        sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview)
+        sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview, capture_sync)
         captured += 1
         print(f"[collect] 已保存样本 {captured}: {sample_dir}")
         if max_samples is not None and captured >= max_samples:
@@ -261,18 +270,25 @@ def _capture_once(
     cameras: RealSenseCaptureSystem,
     robot_cfg: RobotConfig,
     preview: OpenCVCameraPreview,
+    capture_sync: URProgramCaptureSync | None,
 ) -> Path:
     """
     保存一组用于标定的同步样本。
 
-    当前同步策略是“顺序近似同步”：先读机器人 TCP 和关节角，再抓取双相机当前帧，
-    最后一起写入同一个 sample_xxx 目录。采样时机器人必须静止，否则 TCP 和图像
-    可能不是同一真实姿态。
+    当前同步策略是“暂停后近似同步”：如果配置启用，先让示教器程序暂停并等待稳定，
+    再读取机器人 TCP、关节角和双相机当前帧。拍照完成后先继续 URP，再把样本写入
+    sample_xxx 目录，尽量缩短机器人停留时间。
     """
-    tcp_pose = robot.get_tcp_pose()
-    joint_angles = robot.get_joint_angles()
-    frames = cameras.capture_all()
-    preview.show(frames)
+    if capture_sync is not None:
+        capture_sync.pause_before_capture()
+    try:
+        tcp_pose = robot.get_tcp_pose()
+        joint_angles = robot.get_joint_angles()
+        frames = cameras.capture_all()
+        preview.show(frames)
+    finally:
+        if capture_sync is not None:
+            capture_sync.resume_after_capture()
     return writer.write_sample(
         tcp_pose=tcp_pose,
         frames=frames,
@@ -400,6 +416,12 @@ def _print_dry_run(
     print(f"[dry-run] project_root: {project_root}")
     print(f"[dry-run] config: {config_path}")
     print(f"[dry-run] robot: {robot_cfg.host}, program={robot_cfg.program}")
+    print(
+        "[dry-run] capture_sync: "
+        f"pause_before_capture={robot_cfg.pause_before_capture}, "
+        f"capture_settle_s={robot_cfg.capture_settle_s}, "
+        f"resume_after_capture={robot_cfg.resume_after_capture}"
+    )
     print(f"[dry-run] dataset_dir: {dataset_dir}")
     print(f"[dry-run] output_dir: {output_dir}")
     print(f"[dry-run] mode: {mode}")

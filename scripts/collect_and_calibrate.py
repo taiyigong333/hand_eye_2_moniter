@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip_robot_program",
         action="store_true",
-        help="不通过 Dashboard 加载/启动 URP，仅连接 RTDE 读取 TCP。",
+        help="不通过 Dashboard 加载/启动 URP；采样前暂停同步仍按配置执行。",
     )
     parser.add_argument(
         "--skip_calibration",
