@@ -63,7 +63,7 @@ class CapturedFrame:
 
 
 class RealSenseCaptureSystem:
-    """双 RealSense 同步采集封装；深度流可按配置打开但标定默认只用 RGB。"""
+    """RealSense 采集封装；根据标定模式可只启动末端相机或同时启动双相机。"""
 
     def __init__(self, specs: list[CameraSpec], warmup_frames: int = 8):
         self.specs = specs

@@ -8,7 +8,8 @@
     "stop_before_load": false,
     "pause_before_capture": true,
     "capture_settle_s": 0.5,
-    "resume_after_capture": true
+    "resume_after_capture": true,
+    "stop_after_collection": true
   },
   "refresh_intrinsics_from_device": true,
   "dataset_dir": "data/live_capture",

@@ -13,7 +13,13 @@ from .dataset import CalibrationDatasetWriter, count_pose_json
 from .intrinsics import save_calib_intrinsics
 from .preview import OpenCVCameraPreview, preview_config_from_workflow_config
 from .realsense import CameraSpec, RealSenseCaptureSystem
-from .robot import RTDERobotClient, RobotConfig, URProgramCaptureSync, prepare_robot_program
+from .robot import (
+    RTDERobotClient,
+    RobotConfig,
+    URProgramCaptureSync,
+    prepare_robot_program,
+    stop_robot_program_after_collection,
+)
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -34,6 +40,42 @@ def load_config(path: str | Path) -> dict[str, Any]:
     return data
 
 
+def _resolve_calibration_mode(config: dict[str, Any], override: str | None) -> str:
+    """把采样模式和标定模式拆开，避免 `--mode timed` 被误认为 calib.py 的模式。"""
+    calibration_cfg = config["calibration"]
+    mode = override or str(calibration_cfg.get("mode", "dual_camera"))
+    if mode not in {"dual_camera", "eye_in_hand"}:
+        raise ValueError(f"不支持的标定模式: {mode}")
+    calibration_cfg["mode"] = mode
+    return mode
+
+
+def _select_camera_items_for_calibration(
+    camera_items: list[dict[str, Any]],
+    calibration_cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    根据标定模式选择本轮需要启动的相机。
+
+    eye_in_hand 不依赖固定相机，因此只启动 end_camera_index 对应相机，避免固定相机
+    未连接时阻塞定时采集和自动标定。
+    """
+    if str(calibration_cfg.get("mode", "dual_camera")) != "eye_in_hand":
+        return camera_items
+
+    end_camera_index = int(calibration_cfg.get("end_camera_index", 0))
+    selected = [
+        item
+        for item in camera_items
+        if int(item.get("camera_index", -1)) == end_camera_index
+    ]
+    if not selected:
+        raise ValueError(
+            f"eye_in_hand 模式找不到 end_camera_index={end_camera_index} 对应的相机配置。"
+        )
+    return selected
+
+
 def run_collection_workflow(args: argparse.Namespace) -> int:
     """
     实时采集 + 自动标定的主编排函数。
@@ -41,25 +83,34 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
     整体流程是：
     1. 从 JSON 配置和命令行覆盖项解析机器人、相机、采样和标定参数。
     2. dry-run 时只打印将要连接的设备和最终 calib.py 命令，不碰机器人/相机。
-    3. 真正运行时先按配置准备 URP，再同时打开 RTDE 和双 RealSense。
-    4. 每次拍照前可按配置暂停 URP、等待机械臂稳定，再保存 `TCP + 双相机图像`。
+    3. 真正运行时先按配置准备 URP，再同时打开 RTDE 和当前模式所需 RealSense。
+    4. 每次拍照前可按配置暂停 URP、等待机械臂稳定，再保存 `TCP + 相机图像`。
     5. 样本数量满足要求后，调用 calib.py 计算手眼标定结果。
     """
     project_root = Path(args.project_root).resolve()
     config_path = Path(args.config).resolve()
     config = load_config(config_path)
+    calibration_mode = _resolve_calibration_mode(
+        config,
+        getattr(args, "calibration_mode", None),
+    )
 
     # 配置文件保持面向用户的 JSON 格式；这里转换成后续模块使用的 dataclass，
     # 使机器人连接、相机启动和路径处理都集中在各自模块里。
     robot_cfg = RobotConfig.from_dict(config["robot"])
-    camera_specs = [CameraSpec.from_dict(item) for item in config["cameras"]]
+    camera_items = _select_camera_items_for_calibration(
+        list(config["cameras"]),
+        config["calibration"],
+    )
+    config["cameras"] = camera_items
+    camera_specs = [CameraSpec.from_dict(item) for item in camera_items]
     sampling_cfg = dict(config.get("sampling", {}))
     preview_cfg = preview_config_from_workflow_config(
         config,
         no_preview=bool(getattr(args, "no_preview", False)),
         preview_scale=getattr(args, "preview_scale", None),
     )
-    mode = args.mode or str(sampling_cfg.get("mode", "timed"))
+    sampling_mode = args.mode or str(sampling_cfg.get("mode", "timed"))
 
     # dataset_dir 保存原始采集样本；output_dir 保存 calib.py 的结果。
     # 命令行参数优先级高于配置文件，便于同一份配置临时跑不同输出目录。
@@ -77,7 +128,17 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         # dry-run 必须在连接硬件前返回，用于实机前检查 IP、序列号、输出路径和标定命令。
-        _print_dry_run(project_root, config_path, robot_cfg, camera_specs, dataset_dir, output_dir, mode, config)
+        _print_dry_run(
+            project_root,
+            config_path,
+            robot_cfg,
+            camera_specs,
+            dataset_dir,
+            output_dir,
+            sampling_mode,
+            calibration_mode,
+            config,
+        )
         return 0
 
     # writer 负责把每组样本落盘为 calib.py 已支持的 sample_xxx/pose.json 结构。
@@ -106,7 +167,7 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
     )
     if preview.enabled:
         print(
-            "[preview] 已启用双相机实时预览；聚焦预览窗口或终端后，"
+            "[preview] 已启用实时预览；聚焦预览窗口或终端后，"
             "手动模式按 c 保存，按 q 结束。"
         )
 
@@ -118,16 +179,18 @@ def run_collection_workflow(args: argparse.Namespace) -> int:
                 # 使用 RealSense 当前 active profile 写内参，避免配置里的内参与实际分辨率/FPS 不一致。
                 _save_live_intrinsics(project_root, camera_specs, cameras)
 
-            if mode == "manual":
+            if sampling_mode == "manual":
                 captured = _manual_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview, capture_sync)
-            elif mode == "timed":
+            elif sampling_mode == "timed":
                 captured = _timed_capture_loop(writer, robot, cameras, robot_cfg, sampling_cfg, preview, capture_sync)
             else:
-                raise ValueError(f"不支持的采样模式: {mode}")
+                raise ValueError(f"不支持的采样模式: {sampling_mode}")
     except KeyboardInterrupt:
         print("\n[collect] 采集被用户中断，已保存的样本会保留。")
     finally:
         preview.close()
+
+    stop_robot_program_after_collection(robot_cfg)
 
     total_samples = count_pose_json(dataset_dir)
     print(f"[collect] 本次新增 {captured} 个样本，数据集当前共有 {total_samples} 个 pose.json。")
@@ -168,6 +231,10 @@ def build_calibration_command(
     # dataset/output 以运行时解析后的路径为准，覆盖配置文件原值。
     calib_cfg["dataset_dir"] = str(_relative_or_absolute(project_root, dataset_dir))
     calib_cfg["output_dir"] = str(_relative_or_absolute(project_root, output_dir))
+    if str(calib_cfg.get("mode", "dual_camera")) == "eye_in_hand":
+        # 只跑眼在手上时不要把固定相机参数带进命令，dry-run 也能清楚反映真实依赖。
+        calib_cfg.pop("fixed_camera_index", None)
+        calib_cfg.pop("intr_fixed", None)
 
     command = [sys.executable, str(project_root / "calib.py")]
     passthrough = {
@@ -211,7 +278,7 @@ def _manual_capture_loop(
     captured = 0
     while max_samples is None or captured < max_samples:
         if preview.enabled:
-            # 手动模式也持续拉取相机帧用于预览，便于确认两台相机都能看到标定板。
+            # 手动模式也持续拉取相机帧用于预览，便于确认当前模式所需相机能看到标定板。
             frames = cameras.capture_all()
             command = _command_from_key(preview.show(frames), capture_key, stop_key)
             command = command or _poll_manual_command(capture_key, stop_key)
@@ -221,7 +288,7 @@ def _manual_capture_loop(
             command = _wait_manual_command(capture_key, stop_key)
         if command == "stop":
             break
-        # 真正保存时会重新读取 TCP 和双相机图像，保证落盘样本对应按键触发时刻。
+        # 真正保存时会重新读取 TCP 和相机图像，保证落盘样本对应按键触发时刻。
         sample_dir = _capture_once(writer, robot, cameras, robot_cfg, preview, capture_sync)
         captured += 1
         print(f"[collect] 已保存样本 {captured}: {sample_dir}")
@@ -409,7 +476,8 @@ def _print_dry_run(
     camera_specs: list[CameraSpec],
     dataset_dir: Path,
     output_dir: Path,
-    mode: str,
+    sampling_mode: str,
+    calibration_mode: str,
     config: dict[str, Any],
 ) -> None:
     """打印本轮真实会使用的硬件配置、输出路径和 calib.py 命令，用于实机前核对。"""
@@ -420,11 +488,13 @@ def _print_dry_run(
         "[dry-run] capture_sync: "
         f"pause_before_capture={robot_cfg.pause_before_capture}, "
         f"capture_settle_s={robot_cfg.capture_settle_s}, "
-        f"resume_after_capture={robot_cfg.resume_after_capture}"
+        f"resume_after_capture={robot_cfg.resume_after_capture}, "
+        f"stop_after_collection={robot_cfg.stop_after_collection}"
     )
     print(f"[dry-run] dataset_dir: {dataset_dir}")
     print(f"[dry-run] output_dir: {output_dir}")
-    print(f"[dry-run] mode: {mode}")
+    print(f"[dry-run] sampling_mode: {sampling_mode}")
+    print(f"[dry-run] calibration_mode: {calibration_mode}")
     preview_cfg = dict(config.get("preview", {}))
     print(
         "[dry-run] preview: "

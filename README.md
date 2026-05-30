@@ -46,7 +46,7 @@
 本项目有两种常用运行方式：
 
 - 使用本地已有样本直接跑标定：适合验证环境、复现当前结果；`data/dataset_from_npz/` 不随 Git 保存。
-- 连接 UR7e 和两台 RealSense 实时采集：适合重新采集数据并自动标定。
+- 连接 UR7e 和 RealSense 实时采集：适合重新采集数据并自动标定。
 
 ## 1. 环境准备
 
@@ -185,7 +185,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --config configs\live_collection.example.json
 ```
 
-该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开两路实时预览窗口，并在每次拍照前按配置发送 Dashboard `pause`、等待 0.5 秒、拍照后发送 `play` 继续示教器程序。采集结束后会自动调用 `calib.py`。详细说明见 [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)，采集前参数清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)。
+该流程会加载配置文件中的 URP 程序、通过 RTDE 读取 TCP、打开实时预览窗口，并在每次拍照前按配置发送 Dashboard `pause`、等待 0.5 秒、拍照后发送 `play` 继续示教器程序。采集结束后会发送 Dashboard `stop` 停止示教器程序，再自动调用 `calib.py`。详细说明见 [docs/4_实时采集与自动标定流程.md](docs/4_实时采集与自动标定流程.md)，采集前参数清单见 [docs/11_标定前参数确认清单.md](docs/11_标定前参数确认清单.md)。
 
 ### 常用命令
 
@@ -200,6 +200,14 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
   --config configs\live_collection.example.json
+```
+
+定时采集并只跑眼在手上标定：
+
+```powershell
+F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
+  --config configs\live_collection.example.json `
+  --calibration_mode eye_in_hand
 ```
 
 手动采集并自动标定：
@@ -228,7 +236,7 @@ F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py 
   --skip_robot_program
 ```
 
-采集默认打开双相机预览窗口。无桌面显示或不需要观察画面时可关闭：
+采集默认打开当前标定模式所需相机的预览窗口。无桌面显示或不需要观察画面时可关闭：
 
 ```powershell
 F:\Anaconda\Anaconda3\envs\hand_eye\python.exe scripts\collect_and_calibrate.py `
@@ -331,6 +339,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 - `robot.host`：UR7e 的 IP 地址。
 - `robot.program`：示教器中已经保存的 URP 文件名，当前示例配置为 `autoHandEye2.urp`。
 - `robot.pause_before_capture` / `robot.capture_settle_s` / `robot.resume_after_capture`：每次拍照前发送 `pause`，等待机械臂稳定，拍照后发送 `play`。
+- `robot.stop_after_collection`：采集结束后发送 Dashboard `stop`，避免自动标定时示教器程序继续运行。
 - `cameras[].serial`：RealSense 序列号，建议实机前确认。
 - `cameras[].color_width` / `color_height` / `fps`：RGB 流参数。
 - `cameras[].intrinsics_path`：相机启动后写入 active profile 内参的位置，也是后续标定使用的内参路径。
@@ -340,7 +349,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 - `sampling.interval_s`：定时模式下的采样间隔。
 - `sampling.max_samples`：采样数量上限。
 - `calibration`：采集结束后传给 `calib.py` 的标定参数。
-- `calibration.mode`：`dual_camera` 同时输出腕部相机和固定相机外参；`eye_in_hand` 只要求腕部相机图像并只跑眼在手上。
+- `calibration.mode`：`dual_camera` 同时输出腕部相机和固定相机外参；`eye_in_hand` 只启动末端腕部相机并只跑眼在手上。命令行可用 `--calibration_mode eye_in_hand` 临时覆盖。
 
 默认相机约定：
 
@@ -353,6 +362,6 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 - UR 控制柜已启用 Dashboard server 和 RTDE。
 - `configs/live_collection.example.json` 中的 `robot.program` 已经保存在示教器中。
 - 如启用 `robot.pause_before_capture`，确认示教器程序允许运行中被 Dashboard `pause` 暂停，并可用 `play` 继续。
-- 两台 RealSense 没有被 RealSense Viewer 或其他程序占用。
+- 当前模式需要的 RealSense 没有被 RealSense Viewer 或其他程序占用。
 - `configs/live_collection.example.json` 中的 RealSense 序列号、分辨率和 FPS 与实际设备一致。
-- 标定板在每个有效采样姿态中都能同时被两台相机看到。
+- `dual_camera` 模式下标定板在每个有效采样姿态中都能同时被两台相机看到；`eye_in_hand` 模式下只要求末端腕部相机看到标定板。

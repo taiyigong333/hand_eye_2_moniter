@@ -15,7 +15,7 @@ from handeye.workflow import run_collection_workflow
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="通过 UR RTDE + 双 RealSense 采集手眼标定样本，并在结束后自动调用 calib.py。"
+        description="通过 UR RTDE + RealSense 采集手眼标定样本，并在结束后自动调用 calib.py。"
     )
     parser.add_argument(
         "--config",
@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         choices=["timed", "manual"],
         default=None,
         help="覆盖配置中的采样模式。",
+    )
+    parser.add_argument(
+        "--calibration_mode",
+        choices=["dual_camera", "eye_in_hand"],
+        default=None,
+        help="覆盖 calibration.mode；eye_in_hand 只采集末端相机并只运行眼在手上标定。",
     )
     parser.add_argument(
         "--dataset_dir",
@@ -56,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no_preview",
         action="store_true",
-        help="采集时不打开双相机实时预览窗口。",
+        help="采集时不打开实时预览窗口。",
     )
     parser.add_argument(
         "--preview_scale",

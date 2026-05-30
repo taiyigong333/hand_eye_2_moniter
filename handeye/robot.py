@@ -17,6 +17,7 @@ class RobotConfig:
     pause_before_capture: bool = False
     capture_settle_s: float = 0.5
     resume_after_capture: bool = True
+    stop_after_collection: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RobotConfig":
@@ -30,6 +31,7 @@ class RobotConfig:
             pause_before_capture=bool(data.get("pause_before_capture", False)),
             capture_settle_s=float(data.get("capture_settle_s", 0.5)),
             resume_after_capture=bool(data.get("resume_after_capture", True)),
+            stop_after_collection=bool(data.get("stop_after_collection", True)),
         )
 
 
@@ -158,6 +160,15 @@ def prepare_robot_program(config: RobotConfig) -> None:
         dashboard.load_program(config.program)
     if config.play_after_load:
         dashboard.play()
+
+
+def stop_robot_program_after_collection(config: RobotConfig) -> None:
+    """采集阶段结束后停止示教器程序，避免自动标定时机器人继续运动。"""
+    if not config.stop_after_collection:
+        return
+    dashboard = URDashboardClient(config.host, config.dashboard_port)
+    dashboard.stop()
+    print("[robot] 采集结束，已发送 Dashboard stop 停止示教器程序。")
 
 
 def _format_pose(values: list[float]) -> str:
