@@ -1,10 +1,10 @@
 # UR7e RealSense 手眼标定
 本代码基于Xiangyi Wang同学的代码改造，主要添加的实现是半自动化实现手眼标定。
-这个仓库用于 UR7e 机械臂与双 RealSense 相机的手眼标定。当前数据中：
+这个仓库用于 UR7e 机械臂与 RealSense 相机的手眼标定。当前数据中：
 
 - `cam0_wrist.png` / `camera_index=0` 是末端腕部相机，用于眼在手上标定。
 - `cam1_main.png` / `camera_index=1` 是外部固定相机，用于估计固定相机到机器人基座的外参。
-- `calib.py` 是主标定入口，会同时输出 `T_ee_cam_end`、`T_base_board` 和 `T_base_cam_fixed`。
+- `calib.py` 是主标定入口；默认 `--mode dual_camera` 会输出 `T_ee_cam_end`、`T_base_board` 和 `T_base_cam_fixed`，`--mode eye_in_hand` 只跑眼在手上并输出 `T_ee_cam_end`。
 
 ## 目录结构
 
@@ -77,6 +77,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_current_calibration.ps1
 
 ```powershell
 python calib.py `
+  --mode dual_camera `
   --dataset_dir data/dataset_from_npz `
   --fixed_camera_index 1 `
   --end_camera_index 0 `
@@ -92,6 +93,32 @@ python calib.py `
   --id_map_json assets/boards/aruco_id_map_new.json `
   --max_reproj_rmse 10.0 `
   --output_dir outputs/calib_output_correct_intr
+```
+
+如果只需要眼在手上结果，不要求固定相机图像存在，可以运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_eye_in_hand_calibration.ps1
+```
+
+等价的核心参数是：
+
+```powershell
+python calib.py `
+  --mode eye_in_hand `
+  --dataset_dir data/dataset_from_npz `
+  --end_camera_index 0 `
+  --intr_end configs/intr_d405_1280x720.json `
+  --board_layout interleaved_checker `
+  --grid_cols 20 `
+  --grid_rows 15 `
+  --tag_size 0.015 `
+  --cell_size 0.019 `
+  --aruco_dict DICT_6X6_250 `
+  --top_left_is_tag true `
+  --id_map_json assets/boards/aruco_id_map_new.json `
+  --max_reproj_rmse 10.0 `
+  --output_dir outputs/eye_in_hand_calibration
 ```
 
 如果本地保留已有输出，可查看 `outputs/calib_output_correct_intr/calibration_result.json`；`outputs/` 默认也不随 Git 保存。
@@ -126,12 +153,13 @@ outputs/calib_output_correct_intr/
 `calibration_result.json` 主要包含：
 
 - `num_total_samples`：读取到的样本总数。
-- `num_valid_samples`：通过双相机检测和重投影误差筛选后的有效样本数。
+- `num_valid_samples`：通过当前模式所需相机检测和重投影误差筛选后的有效样本数。
+- `mode`：`dual_camera` 或 `eye_in_hand`。
 - `handeye_method`：OpenCV 手眼标定方法。
 - `board_config`：标定板布局、尺寸和 ID 映射相关配置。
 - `T_ee_cam_end`：末端腕部相机到机械臂末端坐标系的外参。
 - `T_base_board`：标定板到机器人基座坐标系的外参。
-- `T_base_cam_fixed`：外部固定相机到机器人基座坐标系的外参。
+- `T_base_cam_fixed`：外部固定相机到机器人基座坐标系的外参；仅 `dual_camera` 模式输出。
 
 `dynamic_end_camera_poses.json` 主要包含：
 
@@ -312,6 +340,7 @@ outputs/live_calibration_YYYYMMDD_HHMMSS/
 - `sampling.interval_s`：定时模式下的采样间隔。
 - `sampling.max_samples`：采样数量上限。
 - `calibration`：采集结束后传给 `calib.py` 的标定参数。
+- `calibration.mode`：`dual_camera` 同时输出腕部相机和固定相机外参；`eye_in_hand` 只要求腕部相机图像并只跑眼在手上。
 
 默认相机约定：
 

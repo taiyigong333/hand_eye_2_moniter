@@ -54,6 +54,7 @@
     "manual_stop_key": "q"
   },
   "calibration": {
+    "mode": "dual_camera",
     "min_samples": 5,
     "dataset_dir": "data/live_capture",
     "fixed_camera_index": 1,

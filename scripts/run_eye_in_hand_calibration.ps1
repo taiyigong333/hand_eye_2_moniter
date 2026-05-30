@@ -1,16 +1,15 @@
 param(
     [string]$Python = "F:\Anaconda\Anaconda3\envs\hand_eye\python.exe",
-    [string]$OutputDir = "outputs/calib_output_correct_intr"
+    [string]$DatasetDir = "data/dataset_from_npz",
+    [string]$OutputDir = "outputs/eye_in_hand_calibration"
 )
 
 $ErrorActionPreference = "Stop"
 
 & $Python calib.py `
-  --mode dual_camera `
-  --dataset_dir data/dataset_from_npz `
-  --fixed_camera_index 1 `
+  --mode eye_in_hand `
+  --dataset_dir $DatasetDir `
   --end_camera_index 0 `
-  --intr_fixed configs/intr_d435i_1920x1080.json `
   --intr_end configs/intr_d405_1280x720.json `
   --board_layout interleaved_checker `
   --grid_cols 20 `

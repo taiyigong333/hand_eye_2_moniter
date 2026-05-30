@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-机器人基座 + 外部固定相机 + 末端腕部相机的双相机手眼标定入口。
+机器人基座 + 外部固定相机 + 末端腕部相机的手眼标定入口。
 
 本脚本支持两类标定板：
 1) regular_aprilgrid   : 每个网格位置都是一个 AprilTag
@@ -20,12 +20,15 @@
 - 例如 T_base_ee 把末端坐标系下的点变到机器人基座坐标系；
   T_cam_board 把标定板坐标系下的点变到相机坐标系。
 
-本项目采用的计算链路：
+本项目默认采用的双相机计算链路：
 1. 每个样本读取机器人 TCP 位姿，得到 T_base_ee。
 2. 两台相机分别通过 ArUco 角点 + PnP 得到 T_camend_board 和 T_camfixed_board。
 3. 先用腕部相机样本求眼在手上结果 T_ee_cam_end。
 4. 再由 T_base_ee * T_ee_cam_end * T_camend_board 估计固定标定板的 T_base_board。
 5. 最后由 T_base_board * inv(T_camfixed_board) 反推出固定相机外参 T_base_cam_fixed。
+
+如果只需要眼在手上标定，可以使用 --mode eye_in_hand。该模式只要求末端相机
+图像、机器人 TCP 和末端相机内参，不读取固定相机图像，也不会输出 T_base_cam_fixed。
 """
 
 import argparse
@@ -425,7 +428,7 @@ def load_intrinsics(path: str) -> Tuple[np.ndarray, np.ndarray]:
 class Sample:
     json_path: Path
     T_base_ee: np.ndarray
-    image_fixed: Path
+    image_fixed: Optional[Path]
     image_end: Path
     raw: dict
 
@@ -446,15 +449,21 @@ def tcp_pose_to_T_base_ee(tcp_pose: List[float], translation_scale: float = 1.0)
     return make_transform(R, t)
 
 
-def load_samples(dataset_dir: str, fixed_camera_index: int, end_camera_index: int, translation_scale: float) -> List[Sample]:
+def load_samples(
+    dataset_dir: str,
+    end_camera_index: int,
+    translation_scale: float,
+    fixed_camera_index: Optional[int] = None,
+    require_fixed: bool = True,
+) -> List[Sample]:
     """
-    读取一批同步样本。
+    读取一批样本。
 
     每个有效样本必须同时包含：
     - 机器人 TCP 位姿，用于得到 T_base_ee；
-    - 固定相机图像，用于估计 T_camfixed_board；
     - 末端相机图像，用于估计 T_camend_board。
-    缺少任意一项时跳过该样本，因为双相机联合标定需要同一时刻的完整坐标链。
+    双相机联合模式还要求固定相机图像，用于估计 T_camfixed_board；眼在手上
+    独立模式不需要固定相机图像。
     """
     json_files = sorted(Path(dataset_dir).rglob("*.json"))
     samples = []
@@ -466,17 +475,20 @@ def load_samples(dataset_dir: str, fixed_camera_index: int, end_camera_index: in
 
         fixed_rel, end_rel = None, None
         for item in data["images"]:
-            if int(item["camera_index"]) == int(fixed_camera_index):
+            if fixed_camera_index is not None and int(item["camera_index"]) == int(fixed_camera_index):
                 fixed_rel = item["file"]
             if int(item["camera_index"]) == int(end_camera_index):
                 end_rel = item["file"]
-        if fixed_rel is None or end_rel is None:
+        if end_rel is None:
+            continue
+        if require_fixed and fixed_rel is None:
             continue
 
-        fixed_path = jp.parent / fixed_rel
+        fixed_path = jp.parent / fixed_rel if fixed_rel is not None else None
         end_path = jp.parent / end_rel
-        if not fixed_path.exists() or not end_path.exists():
-            print(f"[WARN] Missing image for {jp.name}, skip.")
+        missing_fixed = require_fixed and (fixed_path is None or not fixed_path.exists())
+        if missing_fixed or not end_path.exists():
+            print(f"[WARN] Missing required image for {jp.name}, skip.")
             continue
 
         samples.append(Sample(
@@ -884,12 +896,157 @@ def str2bool(v: str) -> bool:
 # ----------------------------
 
 
+def _load_id_map(path: str | None) -> Optional[Dict[int, Tuple[int, int, int]]]:
+    """读取 marker ID 到物理棋盘格位置的映射。"""
+    if path is None:
+        return None
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw_map = json.load(f)
+
+    id_map: Dict[int, Tuple[int, int, int]] = {}
+    for k, v in raw_map.items():
+        marker_id = int(k)
+        row = int(v[0])
+        col = int(v[1])
+        rot = int(v[2]) if len(v) >= 3 else 0
+        id_map[marker_id] = (row, col, rot)
+    print(f"[INFO] Loaded id_map from {path}, num ids = {len(id_map)}")
+    return id_map
+
+
+def _build_board_from_args(args: argparse.Namespace) -> BoardModel:
+    id_map = _load_id_map(args.id_map_json)
+    board_cfg = BoardConfig(
+        board_layout=args.board_layout,
+        tag_size=args.tag_size,
+        tag_family=args.tag_family,
+        tag_cols=args.tag_cols,
+        tag_rows=args.tag_rows,
+        tag_spacing=args.tag_spacing,
+        grid_cols=args.grid_cols,
+        grid_rows=args.grid_rows,
+        top_left_is_tag=args.top_left_is_tag,
+        cell_size=args.cell_size,
+        id_map=id_map,
+    )
+    board = BoardModel(board_cfg)
+    print(f"[INFO] Board config: {json.dumps(board.describe(), ensure_ascii=False)}")
+    print("[DEBUG] args.tag_size =", args.tag_size)
+    print("[DEBUG] args.cell_size =", args.cell_size)
+    print("[DEBUG] board_cfg.tag_size =", board_cfg.tag_size)
+    print("[DEBUG] board_cfg.cell_size =", board_cfg.cell_size)
+
+    if args.board_layout == "interleaved_checker":
+        assert board_cfg.cell_size is not None, "cell_size 没有传进 BoardConfig"
+        assert board_cfg.cell_size >= board_cfg.tag_size, "cell_size should be >= tag_size"
+    return board
+
+
+def _detect_valid_samples(
+    samples: List[Sample],
+    estimator: "ArucoBoardPoseEstimator",
+    K_end: np.ndarray,
+    dist_end: np.ndarray,
+    debug_dir: Path,
+    min_tags: int,
+    max_reproj_rmse: float,
+    K_fixed: Optional[np.ndarray] = None,
+    dist_fixed: Optional[np.ndarray] = None,
+    require_fixed: bool = True,
+) -> Tuple[List[Sample], List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
+    """
+    对样本逐帧估计标定板位姿。
+
+    require_fixed=True 时执行原来的双相机过滤；False 时只过滤末端相机结果，
+    用于眼在手上独立模式。
+    """
+    valid_samples: List[Sample] = []
+    T_base_ee_list: List[np.ndarray] = []
+    T_camend_board_list: List[np.ndarray] = []
+    T_camfixed_board_list: List[np.ndarray] = []
+
+    for idx, s in enumerate(samples):
+        img_end = cv2.imread(str(s.image_end))
+        if img_end is None:
+            print(f"[WARN] Failed to read end image for {s.json_path.name}, skip.")
+            continue
+
+        T_camend_board, info_end = estimator.estimate_board_pose(
+            img_end, K_end, dist_end, min_tags=min_tags,
+            debug_vis_path=str(debug_dir / f"{idx:03d}_end.jpg"),
+        )
+
+        T_camfixed_board = None
+        info_fixed = None
+        if require_fixed:
+            if s.image_fixed is None:
+                print(f"[WARN] Missing fixed image for {s.json_path.name}, skip.")
+                continue
+            if K_fixed is None or dist_fixed is None:
+                raise ValueError("dual_camera 模式必须提供固定相机内参。")
+            img_fixed = cv2.imread(str(s.image_fixed))
+            if img_fixed is None:
+                print(f"[WARN] Failed to read fixed image for {s.json_path.name}, skip.")
+                continue
+            T_camfixed_board, info_fixed = estimator.estimate_board_pose(
+                img_fixed, K_fixed, dist_fixed, min_tags=min_tags,
+                debug_vis_path=str(debug_dir / f"{idx:03d}_fixed.jpg"),
+            )
+
+        if require_fixed and info_fixed is not None:
+            print(
+                f"[{idx:03d}] {s.json_path.name} | "
+                f"end used={info_end['num_used_tags']}/{info_end['num_detected_tags']}, rmse={info_end['reproj_rmse']} | "
+                f"fixed used={info_fixed['num_used_tags']}/{info_fixed['num_detected_tags']}, rmse={info_fixed['reproj_rmse']}"
+            )
+        else:
+            print(
+                f"[{idx:03d}] {s.json_path.name} | "
+                f"end used={info_end['num_used_tags']}/{info_end['num_detected_tags']}, rmse={info_end['reproj_rmse']}"
+            )
+
+        if T_camend_board is None:
+            print("      -> skip (end camera board pose failed)")
+            continue
+        if info_end["reproj_rmse"] is None:
+            print("      -> skip (end camera rmse is None)")
+            continue
+        if info_end["reproj_rmse"] > max_reproj_rmse:
+            print(f"      -> skip (end rmse too large: {info_end['reproj_rmse']:.3f})")
+            continue
+
+        if require_fixed:
+            if T_camfixed_board is None:
+                print("      -> skip (fixed camera board pose failed)")
+                continue
+            if info_fixed is None or info_fixed["reproj_rmse"] is None:
+                print("      -> skip (fixed camera rmse is None)")
+                continue
+            if info_fixed["reproj_rmse"] > max_reproj_rmse:
+                print(
+                    f"      -> skip (fixed rmse too large: "
+                    f"{info_fixed['reproj_rmse']:.3f})"
+                )
+                continue
+            T_camfixed_board_list.append(T_camfixed_board)
+
+        valid_samples.append(s)
+        T_base_ee_list.append(s.T_base_ee)
+        T_camend_board_list.append(T_camend_board)
+
+    return valid_samples, T_base_ee_list, T_camend_board_list, T_camfixed_board_list
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", type=str, default="dual_camera",
+                        choices=["dual_camera", "eye_in_hand"],
+                        help="dual_camera 保持原双相机联合流程；eye_in_hand 只跑腕部相机眼在手上标定。")
     parser.add_argument("--dataset_dir", type=str, required=True)
     parser.add_argument("--fixed_camera_index", type=int, default=1)
     parser.add_argument("--end_camera_index", type=int, default=0)
-    parser.add_argument("--intr_fixed", type=str, required=True)
+    parser.add_argument("--intr_fixed", type=str, default=None)
     parser.add_argument("--intr_end", type=str, required=True)
 
     parser.add_argument("--board_layout", type=str, default="interleaved_checker",
@@ -917,7 +1074,7 @@ def main():
     parser.add_argument("--id_map_json", type=str, default=None,
                     help="JSON file mapping marker id to [row, col].")
     parser.add_argument("--max_reproj_rmse", type=float, default=5.0,
-                    help="Skip sample if end/fixed reprojection RMSE is larger than this value.")
+                    help="Skip sample if required camera reprojection RMSE is larger than this value.")
     parser.add_argument("--translation_scale", type=float, default=1.0)
     parser.add_argument("--min_tags", type=int, default=4)
     parser.add_argument("--output_dir", type=str, default="outputs/calib_output")
@@ -937,107 +1094,43 @@ def main():
         "daniilidis": cv2.CALIB_HAND_EYE_DANIILIDIS,
     }
 
-    K_fixed, dist_fixed = load_intrinsics(args.intr_fixed)
+    if args.mode == "dual_camera" and not args.intr_fixed:
+        raise ValueError("dual_camera 模式必须提供 --intr_fixed。")
+
+    K_fixed, dist_fixed = (
+        load_intrinsics(args.intr_fixed)
+        if args.mode == "dual_camera" and args.intr_fixed
+        else (None, None)
+    )
     K_end, dist_end = load_intrinsics(args.intr_end)
 
+    require_fixed = args.mode == "dual_camera"
     samples = load_samples(
         args.dataset_dir,
-        fixed_camera_index=args.fixed_camera_index,
         end_camera_index=args.end_camera_index,
         translation_scale=args.translation_scale,
+        fixed_camera_index=args.fixed_camera_index,
+        require_fixed=require_fixed,
     )
     print(f"[INFO] Found {len(samples)} usable samples.")
     if len(samples) < 5:
         raise RuntimeError("Too few samples. At least 5; recommend 15-30.")
-    id_map = None
-    if args.id_map_json is not None:
-        with open(args.id_map_json, "r", encoding="utf-8") as f:
-            raw_map = json.load(f)
 
-        id_map = {}
-        for k, v in raw_map.items():
-            marker_id = int(k)
-            row = int(v[0])
-            col = int(v[1])
-            rot = int(v[2]) if len(v) >= 3 else 0
-            id_map[marker_id] = (row, col, rot)
-        print(f"[INFO] Loaded id_map from {args.id_map_json}, num ids = {len(id_map)}")
-
-    board_cfg = BoardConfig(
-        board_layout=args.board_layout,
-        tag_size=args.tag_size,
-        tag_family=args.tag_family,
-        tag_cols=args.tag_cols,
-        tag_rows=args.tag_rows,
-        tag_spacing=args.tag_spacing,
-        grid_cols=args.grid_cols,
-        grid_rows=args.grid_rows,
-        top_left_is_tag=args.top_left_is_tag,
-        cell_size=args.cell_size,
-        id_map=id_map,
-    )
-    board = BoardModel(board_cfg)
-    print(f"[INFO] Board config: {json.dumps(board.describe(), ensure_ascii=False)}")
-    print("[DEBUG] args.tag_size =", args.tag_size)
-    print("[DEBUG] args.cell_size =", args.cell_size)
-    print("[DEBUG] board_cfg.tag_size =", board_cfg.tag_size)
-    print("[DEBUG] board_cfg.cell_size =", board_cfg.cell_size)
-
-    if args.board_layout == "interleaved_checker":
-        assert board_cfg.cell_size is not None, "cell_size 没有传进 BoardConfig"
-        assert board_cfg.cell_size >= board_cfg.tag_size, "cell_size should be >= tag_size"
-    #estimator = AprilTagBoardPoseEstimator(board, board_cfg.tag_family)
+    board = _build_board_from_args(args)
     estimator = ArucoBoardPoseEstimator(board, args.aruco_dict)
 
-    valid_samples = []
-    T_base_ee_list = []
-    T_camend_board_list = []
-    T_camfixed_board_list = []
-
-    # 每个样本都必须在两台相机中成功估计标定板位姿，并通过重投影误差过滤。
-    # 这样后续 hand-eye 求解使用的是同一时刻的三段链路：
-    # T_base_ee、T_camend_board、T_camfixed_board。
-    for idx, s in enumerate(samples):
-        img_end = cv2.imread(str(s.image_end))
-        img_fixed = cv2.imread(str(s.image_fixed))
-        if img_end is None or img_fixed is None:
-            print(f"[WARN] Failed to read images for {s.json_path.name}, skip.")
-            continue
-
-        T_camend_board, info_end = estimator.estimate_board_pose(
-            img_end, K_end, dist_end, min_tags=args.min_tags,
-            debug_vis_path=str(debug_dir / f"{idx:03d}_end.jpg"),
-        )
-        T_camfixed_board, info_fixed = estimator.estimate_board_pose(
-            img_fixed, K_fixed, dist_fixed, min_tags=args.min_tags,
-            debug_vis_path=str(debug_dir / f"{idx:03d}_fixed.jpg"),
-        )
-
-        print(
-            f"[{idx:03d}] {s.json_path.name} | "
-            f"end used={info_end['num_used_tags']}/{info_end['num_detected_tags']}, rmse={info_end['reproj_rmse']} | "
-            f"fixed used={info_fixed['num_used_tags']}/{info_fixed['num_detected_tags']}, rmse={info_fixed['reproj_rmse']}"
-        )
-
-        if T_camend_board is None or T_camfixed_board is None:
-            print("      -> skip (board pose failed in one camera)")
-            continue
-        if info_end["reproj_rmse"] is None or info_fixed["reproj_rmse"] is None:
-            print("      -> skip (rmse is None)")
-            continue
-
-        if info_end["reproj_rmse"] > args.max_reproj_rmse or info_fixed["reproj_rmse"] > args.max_reproj_rmse:
-            print(
-                f"      -> skip (rmse too large: "
-                f"end={info_end['reproj_rmse']:.3f}, "
-                f"fixed={info_fixed['reproj_rmse']:.3f})"
-            )
-            continue
-
-        valid_samples.append(s)
-        T_base_ee_list.append(s.T_base_ee)
-        T_camend_board_list.append(T_camend_board)
-        T_camfixed_board_list.append(T_camfixed_board)
+    valid_samples, T_base_ee_list, T_camend_board_list, T_camfixed_board_list = _detect_valid_samples(
+        samples=samples,
+        estimator=estimator,
+        K_end=K_end,
+        dist_end=dist_end,
+        debug_dir=debug_dir,
+        min_tags=args.min_tags,
+        max_reproj_rmse=args.max_reproj_rmse,
+        K_fixed=K_fixed,
+        dist_fixed=dist_fixed,
+        require_fixed=require_fixed,
+    )
 
     print(f"[INFO] Valid samples after detection: {len(valid_samples)}")
     if len(valid_samples) < 5:
@@ -1052,20 +1145,23 @@ def main():
     print_transform("T_base_board", T_base_board)
     summarize_transform_list("T_base_board", T_base_board_all, T_base_board)
 
-    # 第三阶段：固定相机也看到了同一块标定板，因此可由 T_base_board 反推出固定相机外参。
-    T_base_cam_fixed, T_base_cam_fixed_all = estimate_T_base_cam_fixed(T_base_board, T_camfixed_board_list)
-    print_transform("T_base_cam_fixed", T_base_cam_fixed)
-    summarize_transform_list("T_base_cam_fixed", T_base_cam_fixed_all, T_base_cam_fixed)
-
     result = {
+        "mode": args.mode,
         "num_total_samples": len(samples),
         "num_valid_samples": len(valid_samples),
         "handeye_method": args.handeye_method,
         "board_config": board.describe(),
         "T_ee_cam_end": transform_to_dict(T_ee_cam_end),
         "T_base_board": transform_to_dict(T_base_board),
-        "T_base_cam_fixed": transform_to_dict(T_base_cam_fixed),
     }
+
+    if args.mode == "dual_camera":
+        # 第三阶段：固定相机也看到了同一块标定板，因此可由 T_base_board 反推出固定相机外参。
+        T_base_cam_fixed, T_base_cam_fixed_all = estimate_T_base_cam_fixed(T_base_board, T_camfixed_board_list)
+        print_transform("T_base_cam_fixed", T_base_cam_fixed)
+        summarize_transform_list("T_base_cam_fixed", T_base_cam_fixed_all, T_base_cam_fixed)
+        result["T_base_cam_fixed"] = transform_to_dict(T_base_cam_fixed)
+
     save_json(str(Path(args.output_dir) / "calibration_result.json"), result)
 
     dynamic = []
@@ -1076,9 +1172,10 @@ def main():
             "sample_json": str(s.json_path),
             "timestamp": s.raw.get("timestamp", None),
             "T_base_cam_end": transform_to_dict(T_base_cam_end_i),
-            # 表示末端相机坐标系中的点如何转换到固定相机坐标系，便于双相机相对位姿分析。
-            "T_cam_fixed_cam_end": transform_to_dict(compose(invert_transform(T_base_cam_fixed), T_base_cam_end_i)),
         })
+        if args.mode == "dual_camera":
+            # 表示末端相机坐标系中的点如何转换到固定相机坐标系，便于双相机相对位姿分析。
+            dynamic[-1]["T_cam_fixed_cam_end"] = transform_to_dict(compose(invert_transform(T_base_cam_fixed), T_base_cam_end_i))
     save_json(str(Path(args.output_dir) / "dynamic_end_camera_poses.json"), dynamic)
 
     print(f"\n[OK] Results saved to: {args.output_dir}")
