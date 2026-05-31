@@ -14,8 +14,8 @@ $ErrorActionPreference = "Stop"
   --board_layout interleaved_checker `
   --grid_cols 20 `
   --grid_rows 15 `
-  --tag_size 0.015 `
-  --cell_size 0.019 `
+  --tag_size 0.01486 `
+  --cell_size 0.01885375 `
   --aruco_dict DICT_6X6_250 `
   --top_left_is_tag true `
   --id_map_json assets/boards/aruco_id_map_new.json `
